@@ -9,7 +9,7 @@ import { createReceiver } from "../packages/runtime/src/receiver-server.mjs";
 import { runCycle } from "../packages/runtime/src/run-cycle.mjs";
 
 test("三端配置目录遵循各平台约定", () => {
-  assert.equal(configRoot({ platform: "win32", home: "X:/home", env: { APPDATA: "X:/profile" } }), path.resolve("X:/profile", "ZhixingWorkbench"));
+  assert.equal(configRoot({ platform: "win32", home: "X:/home", env: { APPDATA: "X:/profile" } }), path.win32.resolve("X:/profile", "ZhixingWorkbench"));
   assert.equal(configRoot({ platform: "darwin", home: "/Users/demo", env: {} }), "/Users/demo/Library/Application Support/ZhixingWorkbench");
   assert.equal(configRoot({ platform: "linux", home: "/home/demo", env: {} }), "/home/demo/.config/zhixing-workbench");
   assert.equal(configRoot({ platform: "linux", home: "/home/demo", env: { XDG_CONFIG_HOME: "/config" } }), "/config/zhixing-workbench");
