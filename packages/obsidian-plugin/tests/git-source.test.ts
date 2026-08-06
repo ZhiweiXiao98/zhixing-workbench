@@ -20,9 +20,12 @@ afterEach(async () => {
 
 describe("Git repository identity", () => {
   it("keeps unrelated local repositories with relative .git dirs separate", () => {
-    const first = repositoryIdentityKey("", "C:\\work\\one", ".git");
-    const second = repositoryIdentityKey("", "C:\\work\\two", ".git");
-    expect(first).toBe(path.resolve("C:\\work\\one", ".git").toLocaleLowerCase());
+    const workRoot = path.join(path.parse(process.cwd()).root, "work");
+    const firstPath = path.join(workRoot, "one");
+    const secondPath = path.join(workRoot, "two");
+    const first = repositoryIdentityKey("", firstPath, ".git");
+    const second = repositoryIdentityKey("", secondPath, ".git");
+    expect(first).toBe(path.resolve(firstPath, ".git").toLocaleLowerCase());
     expect(second).not.toBe(first);
   });
 
@@ -49,8 +52,9 @@ describe("Git repository identity", () => {
   });
 
   it("resolves a relative common dir from the Git command working directory", () => {
-    const root = repositoryIdentityKey("", "C:\\work\\repo", ".git");
-    const nested = repositoryIdentityKey("", "C:\\work\\repo\\docs", "..\\.git");
+    const repository = path.join(path.parse(process.cwd()).root, "work", "repo");
+    const root = repositoryIdentityKey("", repository, ".git");
+    const nested = repositoryIdentityKey("", path.join(repository, "docs"), path.join("..", ".git"));
     expect(nested).toBe(root);
   });
 
@@ -106,18 +110,20 @@ describe("Git repository identity", () => {
   });
 
   it("keeps the newest paths inside the bounded candidate scan even when they arrive last", () => {
+    const driveRoot = path.join(path.parse(process.cwd()).root, "candidates");
     const candidates: Array<{ path: string; observedAt: string; kind: "cwd" | "reported" }> = Array.from({ length: MAX_GIT_CANDIDATES + 5 }, (_, index) => ({
-      path: `C:\\old-${index}`,
+      path: path.join(driveRoot, `old-${index}`),
       observedAt: `2026-07-17T${String(index % 20).padStart(2, "0")}:00:00+08:00`,
       kind: "cwd" as const
     }));
-    candidates.push({ path: "C:\\latest", observedAt: "2026-07-20T09:00:00+08:00", kind: "reported" });
+    const latest = path.join(driveRoot, "latest");
+    candidates.push({ path: latest, observedAt: "2026-07-20T09:00:00+08:00", kind: "reported" });
 
     const selected = prioritizeGitCandidates(candidates);
 
     expect(selected).toHaveLength(MAX_GIT_CANDIDATES);
-    expect(selected[0]?.path).toBe("C:\\latest");
-    expect(selected.some((candidate) => candidate.path === "C:\\old-0")).toBe(false);
+    expect(selected[0]?.path).toBe(path.resolve(latest));
+    expect(selected.some((candidate) => candidate.path === path.resolve(driveRoot, "old-0"))).toBe(false);
   });
 
   it("enforces the child and global discovery attempt budgets", () => {
