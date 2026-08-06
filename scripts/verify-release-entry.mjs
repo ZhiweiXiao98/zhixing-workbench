@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
+import { extractArchive } from "./release-archive.mjs";
 
 const execFileAsync = promisify(execFile);
 const root = path.resolve(import.meta.dirname, "..");
@@ -34,7 +35,7 @@ try {
   await mkdir(path.dirname(personal), { recursive: true });
   await mkdir(codexHome, { recursive: true });
   await writeFile(personal, "这份个人内容必须保留。\n", "utf8");
-  await execFileAsync("tar", ["-xzf", path.join(releaseRoot, asset.file), "-C", extracted], processOptions());
+  await extractArchive(path.join(releaseRoot, asset.file), extracted);
 
   const packageRoot = path.join(extracted, "zhixing-workbench");
   await runRootEntry(packageRoot, vault);

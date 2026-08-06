@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { extractedArchivePaths } from "./release-archive.mjs";
+import { archivePaths } from "./release-archive.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const releaseRoot = path.join(root, "release");
@@ -19,7 +19,7 @@ for (const asset of manifest.assets) {
   if (!(await stat(target)).isFile()) throw new Error(`资产不存在：${asset.file}`);
   const actual = createHash("sha256").update(await readFile(target)).digest("hex");
   if (actual !== asset.sha256) throw new Error(`资产校验不一致：${asset.file}`);
-  const listing = await extractedArchivePaths(target);
+  const listing = await archivePaths(target);
   for (const required of [
     "zhixing-workbench/安装知行台.cmd",
     "zhixing-workbench/install-zhixing.sh",

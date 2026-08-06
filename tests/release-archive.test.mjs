@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { extractedArchivePaths } from "../scripts/release-archive.mjs";
+import { archivePaths, extractArchive } from "../scripts/release-archive.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,8 +20,11 @@ test("Release 结构检查通过解包后的文件系统识别中文安装入口
       timeout: 30_000,
       windowsHide: true
     });
-    const paths = await extractedArchivePaths(archive);
+    const paths = await archivePaths(archive);
     assert.ok(paths.includes("zhixing-workbench/安装知行台.cmd"));
+    const extracted = path.join(root, "extracted");
+    await extractArchive(archive, extracted);
+    assert.equal(await readFile(path.join(extracted, "zhixing-workbench", "安装知行台.cmd"), "utf8"), "@echo off\r\n");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
