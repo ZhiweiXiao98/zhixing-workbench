@@ -1,0 +1,31 @@
+{
+  "name": "@zhixing-workbench/obsidian-plugin",
+  "version": "0.6.0",
+  "private": true,
+  "description": "Zhixing Workbench Obsidian desktop plugin",
+  "author": "肖志伟",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm test && npm run build",
+    "install:vault": "node ../../scripts/zhixing.mjs install"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "builtin-modules": "^5.0.0",
+    "esbuild": "^0.28.1",
+    "obsidian": "^1.13.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "date-fns": "^4.4.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.25"
+  }
+}

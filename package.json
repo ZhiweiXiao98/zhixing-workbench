@@ -1,0 +1,26 @@
+{
+  "name": "zhixing-workbench",
+  "version": "0.6.0",
+  "private": true,
+  "description": "跨平台的 Obsidian 知识工作台、自动采集与长期知识沉淀套件",
+  "author": "肖志伟",
+  "license": "MIT",
+  "repository": "github:ZhiweiXiao98/zhixing-workbench",
+  "homepage": "https://github.com/ZhiweiXiao98/zhixing-workbench#readme",
+  "bugs": "https://github.com/ZhiweiXiao98/zhixing-workbench/issues",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "bootstrap": "npm ci --prefix packages/obsidian-plugin",
+    "build": "npm run build --prefix packages/obsidian-plugin",
+    "test": "node --test tests/*.test.mjs && npm test --prefix packages/obsidian-plugin",
+    "typecheck": "npm run typecheck --prefix packages/obsidian-plugin",
+    "privacy": "node scripts/privacy-scan.mjs --worktree --history",
+    "verify": "npm run typecheck && npm run build && npm test && npm run privacy",
+    "package:release": "node scripts/build-release.mjs",
+    "package:verify": "node scripts/verify-release.mjs",
+    "diagnose": "node scripts/zhixing.mjs diagnose"
+  }
+}

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ChatGPT to Obsidian</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <header>
+      <img class="brand-icon" src="icons/icon32.png" alt="">
+      <div>
+        <h1>ChatGPT → Obsidian</h1>
+        <p id="receiver-label">正在检查本地接收器</p>
+      </div>
+      <span id="receiver-dot" class="status-dot" aria-hidden="true"></span>
+    </header>
+
+    <main>
+      <label class="setting-row" for="enabled">
+        <span>
+          <strong>自动记录</strong>
+          <small>回答完成后写入本地 Vault</small>
+        </span>
+        <input id="enabled" type="checkbox">
+      </label>
+
+      <details id="connection-settings">
+        <summary>本机连接</summary>
+        <label class="token-field" for="receiver-token">
+          <span>接收密钥</span>
+          <input id="receiver-token" type="password" autocomplete="off" spellcheck="false" placeholder="从 Obsidian 知行台复制">
+        </label>
+        <div class="connection-actions">
+          <small id="connection-result">密钥只保存在本机浏览器中</small>
+          <button id="save-connection" type="button">保存并检查</button>
+        </div>
+      </details>
+
+      <section aria-labelledby="conversation-heading">
+        <h2 id="conversation-heading">当前对话</h2>
+        <p id="conversation-title">当前页面不是已保存的 ChatGPT 对话</p>
+        <p id="page-status" class="page-status">正在读取当前页面</p>
+        <div class="conversation-actions">
+          <button id="capture-now" class="primary" type="button" disabled>立即采集当前对话</button>
+          <button id="conversation-toggle" type="button" disabled>暂停本对话</button>
+        </div>
+        <p id="capture-result" class="capture-result" aria-live="polite"></p>
+      </section>
+
+      <footer>
+        <span>
+          <strong id="save-label">尚无写入记录</strong>
+          <small id="queue-label">已全部发送</small>
+        </span>
+        <button id="retry" class="secondary" type="button">立即重试</button>
+      </footer>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

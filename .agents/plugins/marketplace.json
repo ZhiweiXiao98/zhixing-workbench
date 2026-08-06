@@ -1,0 +1,20 @@
+{
+  "name": "zhixing-workbench",
+  "interface": {
+    "displayName": "知行台套件"
+  },
+  "plugins": [
+    {
+      "name": "zhixing-workbench",
+      "source": {
+        "source": "local",
+        "path": "."
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

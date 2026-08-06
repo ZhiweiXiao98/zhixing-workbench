@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packages/obsidian-plugin/package-lock.json
+      - run: npm ci --prefix packages/obsidian-plugin
+      - run: npm audit --prefix packages/obsidian-plugin --audit-level=moderate --registry=https://registry.npmjs.org/
+      - run: npm run verify
+      - run: npm run package:release
+      - run: npm run package:verify
+      - uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: |
+            release/*.tar.gz
+            release/update-manifest.json
+            release/SHA256SUMS

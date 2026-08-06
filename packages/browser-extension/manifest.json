@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "知行台 · ChatGPT 采集",
+  "version": "0.6.0",
+  "description": "将 ChatGPT 当前页面的完整问答安全发送到本机知行台。",
+  "author": "肖志伟",
+  "minimum_chrome_version": "120",
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "alarms",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:43123/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "知行台 · 采集当前 ChatGPT 对话",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*"
+      ],
+      "js": [
+        "capture-core.js",
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

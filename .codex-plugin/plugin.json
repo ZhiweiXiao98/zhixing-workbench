@@ -1,0 +1,20 @@
+{
+  "name": "zhixing-workbench",
+  "version": "0.6.0",
+  "description": "在 Codex 中检索、回顾、安装、诊断和更新本地知行台套件。",
+  "author": {
+    "name": "肖志伟"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "知行台套件",
+    "shortDescription": "检索个人知识，回顾工作，并管理知行台。",
+    "longDescription": "提供中文知识检索、工作历史调查，以及跨平台安装、诊断和更新指引。",
+    "developerName": "肖志伟",
+    "category": "Productivity",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "capabilities": ["knowledge-search", "work-history", "suite-management"],
+    "defaultPrompt": "请使用知行台检索我的本地知识，或检查知行台组件状态。"
+  }
+}

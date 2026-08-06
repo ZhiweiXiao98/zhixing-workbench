@@ -1,0 +1,10 @@
+{
+  "name": "@zhixing-workbench/runtime",
+  "version": "0.6.0",
+  "private": true,
+  "author": "肖志伟",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  }
+}

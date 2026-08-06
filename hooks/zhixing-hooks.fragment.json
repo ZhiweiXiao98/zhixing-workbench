@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{NODE}} \"{{PROGRAM_ROOT}}/runtime/capture-hook.mjs\"",
+            "timeout": 5,
+            "statusMessage": "正在记录到知行台"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "{{NODE}} \"{{PROGRAM_ROOT}}/runtime/capture-hook.mjs\"",
+            "timeout": 5,
+            "statusMessage": "正在记录知行台结果"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+.venv/
+node_modules/
+release/
+.test-output/
+packages/obsidian-plugin/node_modules/
+release/
+.release-staging/
+coverage/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+.zhixing-device.json
+config.local.js
