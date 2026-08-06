@@ -24,7 +24,8 @@ await copyFiles("packages/runtime", ["package.json"]);
 await cp(path.join(root, "packages", "runtime", "src"), path.join(bundle, "packages", "runtime", "src"), { recursive: true });
 await cp(path.join(root, "packages", "browser-extension"), path.join(bundle, "packages", "browser-extension"), { recursive: true });
 await copyFiles("packages/obsidian-plugin", ["main.js", "manifest.json", "styles.css", "package.json", "versions.json"]);
-await cp(path.join(root, "templates", "install", "安装知行台.cmd"), path.join(bundle, "安装知行台.cmd"));
+const windowsEntry = await readFile(path.join(root, "templates", "install", "安装知行台.cmd"), "utf8");
+await writeFile(path.join(bundle, "安装知行台.cmd"), windowsEntry.replace(/\r?\n/g, "\r\n"), "utf8");
 await cp(path.join(root, "templates", "install", "install-zhixing.sh"), path.join(bundle, "install-zhixing.sh"));
 
 const platforms = ["windows-x64", "macos-arm64", "macos-x64", "ubuntu-x64"];

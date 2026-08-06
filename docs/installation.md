@@ -13,16 +13,24 @@ sh install-zhixing.sh
 ## 浏览器扩展
 
 1. 打开 Chrome、Edge 或 Chromium 的扩展管理页并开启开发者模式。
-2. 选择“加载已解压的扩展”，指向安装包的 `packages/browser-extension`。
-3. 在 Obsidian 打开“知行台 → 整理记录”，点击钥匙图标复制本机接收密钥。
-4. 打开浏览器扩展的“本机连接”，粘贴密钥并点击“保存并检查”。
+2. 在 Obsidian 打开“知行台 → 整理记录”，点击文件夹图标。系统会打开这台设备上的固定扩展目录。
+3. 选择“加载已解压的扩展”，指向刚打开的目录。
+4. 点击钥匙图标复制本机接收密钥；打开浏览器扩展的“本机连接”，粘贴密钥并点击“保存并检查”。
+
+固定目录随系统而异：
+
+- Windows：`%APPDATA%\ZhixingWorkbench\browser-extension`
+- macOS：`~/Library/Application Support/ZhixingWorkbench/browser-extension`
+- Ubuntu：`${XDG_CONFIG_HOME:-~/.config}/zhixing-workbench/browser-extension`
+
+后续更新直接替换这个固定目录中的程序，浏览器加载位置保持不变。更新后在扩展管理页点击一次“重新加载”，版本即可切换。
 
 扩展离线时会保留最多 2000 条待发送事件，每分钟重试一次。密钥只保存在设备配置和浏览器本地存储中。
 
 ## Codex 插件
 
 ```bash
-codex plugin marketplace add ZhiweiXiao98/zhixing-workbench --ref v0.6.0
+codex plugin marketplace add ZhiweiXiao98/zhixing-workbench --ref v0.6.1
 codex plugin add zhixing-workbench@zhixing-workbench
 ```
 
@@ -47,7 +55,7 @@ npm install -g @larksuite/cli@latest
 ## 首次验收
 
 1. 左侧知行台图标可以打开日历、成果、任务轨迹、量化分析和整理记录。
-2. 整理记录显示 `v0.6.0`，网页采集、知识运行时和飞书入口显示明确状态。
+2. 整理记录显示 `v0.6.1`，网页采集、知识运行时和飞书入口显示明确状态。
 3. 在 ChatGPT 已保存的对话中点击“立即采集当前对话”，扩展显示“已全部发送”。
 4. 回到知行台刷新，当天出现 ChatGPT 对话证据。
 5. 点击“立即整理”后，处理结果出现在整理记录；失败内容仍留在队列中。
@@ -59,5 +67,12 @@ npm install -g @larksuite/cli@latest
 - Safari 扩展未包含在首版。
 - 自动语义整理需要本机已登录并可调用 Codex CLI。
 - Git 扫描只读取本地候选仓库，不上传仓库内容。
+- Release 门禁分别使用 Windows x64、macOS arm64、macOS x64 和 Ubuntu x64 runner，解包对应真实资产并执行根目录入口；本地套件逻辑测试覆盖安装、诊断、更新、故障回滚、卸载和个人数据保留。
 - Windows 已验证官方 `lark-cli` 1.0.84 的命令契约与本机只读运行路径；macOS 和 Ubuntu 通过同一 Node 核心、平台安装与虚构契约测试。首个 Release 不宣称三端真实企业飞书账号端到端验收。
 - 文档正文、会议纪要和审批详情以当前用户真实可访问范围为准；删除或撤权后保留历史追溯并显示来源状态。
+
+## 升级与旧版迁移
+
+- 从公开版 0.6.0 升级时，无所有权标记的 Skill 只有在内容与旧程序副本完全一致时才会由套件认领；存在用户修改时保留原内容并报告冲突。
+- 从私人版 `activity-ledger-view` 0.5.0 迁移时，安装器备份旧插件、保留设备接收密钥和 Vault 数据，并只停用已由旧版创建且名称明确的三个 Windows 任务。卸载 0.6.1 时可以恢复这份旧插件与任务状态。
+- 迁移不会改写 `raw/`、`wiki/`、`成果/`、`AGENTS.md` 或手写内容。

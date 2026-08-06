@@ -1,24 +1,35 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { cp, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, readlink, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { configRoot, readJson } from "../packages/runtime/src/common.mjs";
+import { discoverExecutable } from "../packages/runtime/src/executable-discovery.mjs";
 
 const execFileAsync = promisify(execFile);
-export const VERSION = "0.6.0";
+const SKILL_MARKER = ".zhixing-owner.json";
+const LEGACY_PLUGIN_ID = "activity-ledger-view";
+const PLUGIN_ID = "zhixing-workbench";
+const LEGACY_TASK_NAMES = [
+  "Codex - ChatGPT Web Capture Receiver",
+  "Codex - ChatGPT Web Capture Watchdog",
+  "Codex - Obsidian Daily Ingest"
+];
+
+export const VERSION = "0.6.1";
 export const OWNED_SKILLS = ["obsidian-knowledge", "investigate-work-history", "zhixing-manager"];
 
-export async function installSuite(options) {
-  const sourceRoot = path.resolve(options.sourceRoot);
-  const vault = path.resolve(options.vault || "");
-  if (!vault) throw new Error("请使用 --vault 指定 Obsidian Vault");
+export async function installSuite(options = {}) {
+  const suppliedVault = typeof options.vault === "string" ? options.vault.trim() : "";
+  if (!suppliedVault) throw new Error("请使用 --vault 指定 Obsidian Vault，路径不能为空");
+  const sourceRoot = path.resolve(options.sourceRoot || "");
+  const vault = path.resolve(suppliedVault);
   await assertDirectory(vault, "Vault 路径不存在");
-  const pluginBuild = path.join(sourceRoot, "packages", "obsidian-plugin", "main.js");
-  await assertFile(pluginBuild, "插件尚未构建，请先运行 npm run build");
+  await assertFile(path.join(sourceRoot, "packages", "obsidian-plugin", "main.js"), "插件尚未构建，请先运行 npm run build");
 
   const root = configRoot(options.configOptions);
+  const codexHome = path.resolve(options.codexHome || process.env.CODEX_HOME || path.join(homedir(), ".codex"));
   const programsRoot = path.join(root, "programs");
   const programRoot = path.join(programsRoot, VERSION);
   const staging = path.join(programsRoot, `.staging-${VERSION}-${randomUUID()}`);
@@ -27,47 +38,77 @@ export async function installSuite(options) {
   await assembleProgram(sourceRoot, staging);
 
   const programBackup = await replaceDirectory(staging, programRoot);
-  const pluginTarget = path.join(vault, ".obsidian", "plugins", "zhixing-workbench");
+  const pluginTarget = path.join(vault, ".obsidian", "plugins", PLUGIN_ID);
   const pluginStage = `${pluginTarget}.staging-${randomUUID()}`;
   const pluginBackup = `${pluginTarget}.backup-${Date.now()}`;
+  let pluginReplaced = false;
+  let browserChange;
+  let skillChange;
+  let legacyChange;
   try {
+    legacyChange = await migrateLegacyInstallation({
+      vault, root, codexHome, previousInstall,
+      taskManager: options.legacyTaskManager || createLegacyTaskManager(process.platform)
+    });
     await mkdir(path.dirname(pluginTarget), { recursive: true });
     await copyPlugin(sourceRoot, pluginStage);
     if (await exists(pluginTarget)) await rename(pluginTarget, pluginBackup);
     await rename(pluginStage, pluginTarget);
+    pluginReplaced = true;
     if (options.faultStage === "after-plugin-replace") throw new Error("测试注入：插件替换后失败");
+
+    browserChange = await replaceManagedDirectory(
+      path.join(sourceRoot, "packages", "browser-extension"),
+      path.join(root, "browser-extension")
+    );
+    if (options.faultStage === "after-extension-replace") throw new Error("测试注入：扩展替换后失败");
+
     await initializeVault(vault, sourceRoot);
-    const device = await ensureDeviceConfig(root);
-    const codexHome = path.resolve(options.codexHome || process.env.CODEX_HOME || path.join(homedir(), ".codex"));
-    await installSkills(sourceRoot, codexHome);
+    const device = await ensureDeviceConfig(root, legacyChange.state?.receiver_config_path, vault);
+    skillChange = await installSkills(sourceRoot, codexHome, root, previousInstall);
+    if (options.faultStage === "after-skills-replace") throw new Error("测试注入：Skill 替换后失败");
     if (!options.skipHooks) await installHooks(codexHome, programRoot);
     const install = {
-      schema_version: 1,
+      schema_version: 2,
       version: VERSION,
       installed_at: new Date().toISOString(),
       platform: process.platform,
       arch: process.arch,
       vault_root: vault,
       program_root: programRoot,
+      browser_extension_root: browserChange.target,
+      browser_extension_sha256: await hashDirectory(browserChange.target),
       receiver_port: device.receiver_port,
-      components: ["obsidian-plugin", "codex-skills", "codex-hooks", "browser-extension", "knowledge-runtime", "feishu-connector"]
+      components: ["obsidian-plugin", "codex-skills", "codex-hooks", "browser-extension", "knowledge-runtime", "feishu-connector"],
+      skills: skillChange.skills,
+      legacy_migration: legacyChange.state
     };
     await atomicJson(path.join(root, "install.json"), install);
-    await rm(pluginBackup, { recursive: true, force: true });
-    if (programBackup) await rm(programBackup, { recursive: true, force: true });
+    await skillChange.commit().catch(() => undefined);
+    await browserChange.commit().catch(() => undefined);
+    await rm(pluginBackup, { recursive: true, force: true }).catch(() => undefined);
+    if (programBackup) await rm(programBackup, { recursive: true, force: true }).catch(() => undefined);
     return {
       ok: true,
       version: VERSION,
       vault,
       plugin: pluginTarget,
       program: programRoot,
+      browser_extension: browserChange.target,
       hooks: options.skipHooks ? "skipped" : "installed",
-      previous_version: previousInstall?.version || null
+      previous_version: previousInstall?.version || null,
+      skill_conflicts: skillChange.conflicts,
+      legacy_migration: legacyChange.state || { migrated: false }
     };
   } catch (error) {
+    await skillChange?.rollback().catch(() => undefined);
+    await browserChange?.rollback().catch(() => undefined);
     await rm(pluginStage, { recursive: true, force: true });
-    if (await exists(pluginTarget)) await rm(pluginTarget, { recursive: true, force: true });
-    if (await exists(pluginBackup)) await rename(pluginBackup, pluginTarget);
+    if (pluginReplaced) {
+      await rm(pluginTarget, { recursive: true, force: true });
+      if (await exists(pluginBackup)) await rename(pluginBackup, pluginTarget);
+    }
+    await legacyChange?.rollback().catch(() => undefined);
     if (programBackup) {
       await rm(programRoot, { recursive: true, force: true });
       await rename(programBackup, programRoot);
@@ -81,51 +122,71 @@ export async function installSuite(options) {
 export async function diagnoseSuite(options = {}) {
   const root = configRoot(options.configOptions);
   const install = await readJson(path.join(root, "install.json"), null);
-  const vault = path.resolve(options.vault || process.env.ZHIXING_VAULT || install?.vault_root || "");
+  const suppliedVault = options.vault || process.env.ZHIXING_VAULT || install?.vault_root;
+  const vault = suppliedVault ? path.resolve(suppliedVault) : "";
   const codexHome = path.resolve(options.codexHome || process.env.CODEX_HOME || path.join(homedir(), ".codex"));
   const hooks = await readJson(path.join(codexHome, "hooks.json"), {});
   const feishuConfig = vault ? await readJson(path.join(vault, ".zhixing", "feishu-connector.json"), null) : null;
   const feishuState = vault ? await readJson(path.join(vault, "raw", "feishu", "sync-state.json"), null) : null;
-  const result = {
+  const browserRoot = install?.browser_extension_root || path.join(root, "browser-extension");
+  const browserManifest = await readJson(path.join(browserRoot, "manifest.json"), null);
+  const codex = await discoverExecutable("codex", options.discoveryOptions);
+  const lark = await discoverExecutable("lark-cli", options.discoveryOptions);
+  return {
     version: install?.version || null,
     platform: `${process.platform}-${process.arch}`,
     node: Number(process.versions.node.split(".")[0]) >= 22 ? "ready" : "upgrade-required",
     vault: vault && await exists(vault) ? "ready" : "missing",
-    obsidian_plugin: vault && await exists(path.join(vault, ".obsidian", "plugins", "zhixing-workbench", "main.js")) ? "ready" : "missing",
+    obsidian_plugin: vault && await exists(path.join(vault, ".obsidian", "plugins", PLUGIN_ID, "main.js")) ? "ready" : "missing",
+    legacy_plugin: vault && await exists(path.join(vault, ".obsidian", "plugins", LEGACY_PLUGIN_ID)) ? "active" : "inactive",
     knowledge_runtime: install?.program_root && await exists(path.join(install.program_root, "runtime", "run-cycle.mjs")) ? "ready" : "missing",
-    browser_extension: install?.program_root && await exists(path.join(install.program_root, "browser-extension", "manifest.json")) ? "ready" : "missing",
+    browser_extension: browserManifest?.version === install?.version ? "ready" : browserManifest ? "version-mismatch" : "missing",
+    browser_extension_path: browserRoot,
+    browser_extension_version: browserManifest?.version || null,
     codex_hooks: countOwnedHooks(hooks) >= 2 ? "ready" : "missing",
-    codex_cli: await commandAvailable(process.platform === "win32" ? "codex.exe" : "codex") ? "ready" : "missing",
-    lark_cli: await commandAvailable(process.platform === "win32" ? "lark-cli.cmd" : "lark-cli") ? "ready" : "missing",
+    codex_cli: codex ? "ready" : "missing",
+    codex_cli_path: codex?.path || null,
+    codex_cli_source: codex?.source || null,
+    lark_cli: lark ? "ready" : "missing",
+    lark_cli_path: lark?.path || null,
+    lark_cli_source: lark?.source || null,
     feishu_connector: !feishuConfig?.enabled ? "disabled" : feishuState?.status || "waiting-first-sync",
     feishu_last_sync: feishuState?.last_success || null,
     feishu_failed_modules: Number(feishuState?.failed_modules || 0)
   };
-  return result;
 }
 
 export async function uninstallSuite(options = {}) {
   const root = configRoot(options.configOptions);
   const installPath = path.join(root, "install.json");
   const install = await readJson(installPath, null);
-  if (!install) return { ok: true, status: "not-installed" };
+  if (!install) return { ok: true, status: "not-installed", skill_conflicts: [] };
   const vault = path.resolve(options.vault || install.vault_root);
   const codexHome = path.resolve(options.codexHome || process.env.CODEX_HOME || path.join(homedir(), ".codex"));
-  await rm(path.join(vault, ".obsidian", "plugins", "zhixing-workbench"), { recursive: true, force: true });
+  await rm(path.join(vault, ".obsidian", "plugins", PLUGIN_ID), { recursive: true, force: true });
   await removeHooks(codexHome);
-  for (const skill of OWNED_SKILLS) {
-    await rm(path.join(codexHome, "skills", skill), { recursive: true, force: true });
-  }
+  const skillResult = await uninstallSkills(codexHome, install.skills || []);
+  const legacy = await restoreLegacyInstallation({
+    vault,
+    state: install.legacy_migration,
+    taskManager: options.legacyTaskManager || createLegacyTaskManager(process.platform)
+  });
   await rm(path.join(root, "programs"), { recursive: true, force: true });
+  await rm(install.browser_extension_root || path.join(root, "browser-extension"), { recursive: true, force: true });
   await rm(installPath, { force: true });
-  return { ok: true, status: "uninstalled", data_preserved: ["raw", "wiki", "成果", ".zhixing/feishu-connector.json", "device.json"] };
+  return {
+    ok: true,
+    status: "uninstalled",
+    skill_conflicts: skillResult.conflicts,
+    legacy_restored: legacy.restored,
+    data_preserved: ["raw", "wiki", "成果", "AGENTS.md", ".zhixing/feishu-connector.json", "device.json"]
+  };
 }
 
 export async function installHooks(codexHome, programRoot) {
   const target = path.join(codexHome, "hooks.json");
   const current = await readJson(target, {});
-  const node = process.execPath;
-  const command = `${quoteCommand(node)} ${quoteCommand(path.join(programRoot, "runtime", "capture-hook.mjs"))}`;
+  const command = `${quoteCommand(process.execPath)} ${quoteCommand(path.join(programRoot, "runtime", "capture-hook.mjs"))}`;
   const merged = mergeOwnedHooks(current, command);
   await atomicJson(target, merged);
   return merged;
@@ -177,13 +238,12 @@ async function assembleProgram(sourceRoot, target) {
   await mkdir(target, { recursive: true });
   await cp(path.join(sourceRoot, "packages", "runtime", "src"), path.join(target, "runtime"), { recursive: true });
   await cp(path.join(sourceRoot, "packages", "runtime", "src"), path.join(target, "packages", "runtime", "src"), { recursive: true });
-  await cp(path.join(sourceRoot, "packages", "browser-extension"), path.join(target, "browser-extension"), { recursive: true });
   await cp(path.join(sourceRoot, "skills"), path.join(target, "skills"), { recursive: true });
   await cp(path.join(sourceRoot, "hooks"), path.join(target, "hooks"), { recursive: true });
   await cp(path.join(sourceRoot, "templates"), path.join(target, "templates"), { recursive: true });
   await mkdir(path.join(target, "scripts"), { recursive: true });
-  await cp(path.join(sourceRoot, "scripts", "zhixing.mjs"), path.join(target, "scripts", "zhixing.mjs"), { recursive: false });
-  await cp(path.join(sourceRoot, "scripts", "install-core.mjs"), path.join(target, "scripts", "install-core.mjs"), { recursive: false });
+  await cp(path.join(sourceRoot, "scripts", "zhixing.mjs"), path.join(target, "scripts", "zhixing.mjs"));
+  await cp(path.join(sourceRoot, "scripts", "install-core.mjs"), path.join(target, "scripts", "install-core.mjs"));
   await cp(path.join(sourceRoot, "LICENSE"), path.join(target, "LICENSE"));
   await cp(path.join(sourceRoot, "README.md"), path.join(target, "README.md"));
   await copyPlugin(sourceRoot, path.join(target, "obsidian-plugin"));
@@ -204,37 +264,260 @@ async function initializeVault(vault, sourceRoot) {
   for (const directory of directories) await mkdir(path.join(vault, directory), { recursive: true });
   await writeIfMissing(path.join(vault, ".zhixing", "README.md"),
     "# 知行台本地配置\n\n这里保存知行台的 Vault 级状态。程序更新不会删除个人笔记、raw、wiki 或成果。\n");
-  await writeIfMissing(path.join(vault, "AGENTS.md"),
-    await readFile(path.join(sourceRoot, "templates", "vault", "AGENTS.md"), "utf8"));
+  await writeIfMissing(path.join(vault, "AGENTS.md"), await readFile(path.join(sourceRoot, "templates", "vault", "AGENTS.md"), "utf8"));
   await writeIfMissing(path.join(vault, "wiki", "示例", "把一次排查变成下次可复用的经验.md"),
     await readFile(path.join(sourceRoot, "templates", "vault", "wiki", "示例", "把一次排查变成下次可复用的经验.md"), "utf8"));
 }
 
-async function ensureDeviceConfig(root) {
+async function ensureDeviceConfig(root, legacyConfigPath, vault) {
   const target = path.join(root, "device.json");
   const existing = await readJson(target, null);
   if (existing?.receiver_token && String(existing.receiver_token).length >= 24) return existing;
+  const legacy = legacyConfigPath ? await readJson(legacyConfigPath, null) : null;
+  const sameVault = !legacy?.vault_root || equalPath(legacy.vault_root, vault);
+  const receiverToken = sameVault && typeof legacy?.token === "string" && legacy.token.length >= 24
+    ? legacy.token : randomBytes(32).toString("base64url");
+  const receiverPort = sameVault && Number.isInteger(Number(legacy?.port)) ? Number(legacy.port) : 43123;
   const device = {
     schema_version: 1,
     device_id: randomBytes(16).toString("hex"),
-    receiver_port: 43123,
-    receiver_token: randomBytes(32).toString("base64url"),
-    created_at: new Date().toISOString()
+    receiver_port: receiverPort,
+    receiver_token: receiverToken,
+    created_at: new Date().toISOString(),
+    migrated_from_legacy: receiverToken === legacy?.token
   };
   await atomicJson(target, device);
   return device;
 }
 
-async function installSkills(sourceRoot, codexHome) {
+async function installSkills(sourceRoot, codexHome, root, previousInstall = null) {
+  const previousSkills = Array.isArray(previousInstall?.skills) ? previousInstall.skills : [];
+  const isUpdate = Boolean(previousInstall);
+  const transactionRoot = path.join(root, ".transactions", `skills-${randomUUID()}`);
+  const snapshots = [];
+  const createdBackups = [];
+  const skills = [];
+  const conflicts = [];
   await mkdir(path.join(codexHome, "skills"), { recursive: true });
-  for (const skill of OWNED_SKILLS) {
-    const source = path.join(sourceRoot, "skills", skill);
-    const target = path.join(codexHome, "skills", skill);
-    const staging = `${target}.staging-${randomUUID()}`;
-    await cp(source, staging, { recursive: true });
-    await rm(target, { recursive: true, force: true });
-    await rename(staging, target);
+  try {
+    for (const name of OWNED_SKILLS) {
+      const source = path.join(sourceRoot, "skills", name);
+      const target = path.join(codexHome, "skills", name);
+      const previous = previousSkills.find((item) => item?.name === name) || null;
+      const targetExists = await exists(target);
+      const marker = targetExists ? await readJson(path.join(target, SKILL_MARKER), null) : null;
+      const owned = marker?.owner === PLUGIN_ID && marker?.skill === name && typeof marker?.content_sha256 === "string";
+      const unmodified = owned && await hashDirectory(target, new Set([SKILL_MARKER])) === marker.content_sha256;
+      const matchesPreviousProgram = targetExists && !owned && isUpdate
+        ? await matchesPreviousProgramSkill(target, previousInstall?.program_root, name) : false;
+      if (targetExists && ((owned && !unmodified) || (!owned && isUpdate && !matchesPreviousProgram))) {
+        conflicts.push(name);
+        skills.push({ ...(previous || {}), name, status: "conflict", backup_path: previous?.backup_path || null,
+          content_sha256: marker?.content_sha256 || previous?.content_sha256 || null,
+          installed_version: marker?.installed_version || previous?.installed_version || null });
+        continue;
+      }
+
+      let backupPath = previous?.backup_path || null;
+      if (targetExists && !owned && !matchesPreviousProgram && !backupPath) {
+        backupPath = path.join(root, "backups", "skills", name, `${Date.now()}-${randomUUID()}`);
+        await mkdir(path.dirname(backupPath), { recursive: true });
+        await cp(target, backupPath, { recursive: true });
+        createdBackups.push(backupPath);
+      }
+      const snapshot = path.join(transactionRoot, "current", name);
+      if (targetExists) {
+        await mkdir(path.dirname(snapshot), { recursive: true });
+        await cp(target, snapshot, { recursive: true });
+      }
+      snapshots.push({ target, snapshot: targetExists ? snapshot : null });
+      const staging = `${target}.staging-${randomUUID()}`;
+      await cp(source, staging, { recursive: true });
+      const contentSha256 = await hashDirectory(staging, new Set([SKILL_MARKER]));
+      await writeFile(path.join(staging, SKILL_MARKER), `${JSON.stringify({
+        schema_version: 1,
+        owner: PLUGIN_ID,
+        skill: name,
+        installed_version: VERSION,
+        content_sha256: contentSha256
+      }, null, 2)}\n`, "utf8");
+      await rm(target, { recursive: true, force: true });
+      await rename(staging, target);
+      skills.push({ name, status: "installed", backup_path: backupPath, content_sha256: contentSha256, installed_version: VERSION });
+    }
+    return {
+      skills,
+      conflicts,
+      async rollback() {
+        for (const item of snapshots.reverse()) {
+          await rm(item.target, { recursive: true, force: true });
+          if (item.snapshot) await cp(item.snapshot, item.target, { recursive: true });
+        }
+        for (const backup of createdBackups) await rm(backup, { recursive: true, force: true });
+        await rm(transactionRoot, { recursive: true, force: true });
+      },
+      async commit() { await rm(transactionRoot, { recursive: true, force: true }); }
+    };
+  } catch (error) {
+    for (const item of snapshots.reverse()) {
+      await rm(item.target, { recursive: true, force: true });
+      if (item.snapshot) await cp(item.snapshot, item.target, { recursive: true });
+    }
+    for (const backup of createdBackups) await rm(backup, { recursive: true, force: true });
+    await rm(transactionRoot, { recursive: true, force: true });
+    throw error;
   }
+}
+
+async function matchesPreviousProgramSkill(target, previousProgramRoot, name) {
+  if (typeof previousProgramRoot !== "string" || !previousProgramRoot.trim()) return false;
+  const authority = path.join(previousProgramRoot, "skills", name);
+  if (!await exists(authority)) return false;
+  const ignored = new Set([SKILL_MARKER]);
+  return await hashDirectory(target, ignored) === await hashDirectory(authority, ignored);
+}
+
+async function uninstallSkills(codexHome, ownership) {
+  const conflicts = [];
+  for (const item of ownership) {
+    if (!OWNED_SKILLS.includes(item?.name)) continue;
+    const target = path.join(codexHome, "skills", item.name);
+    const marker = await readJson(path.join(target, SKILL_MARKER), null);
+    const owned = marker?.owner === PLUGIN_ID && marker?.skill === item.name && typeof marker?.content_sha256 === "string";
+    const unmodified = owned && await hashDirectory(target, new Set([SKILL_MARKER])) === marker.content_sha256;
+    if (await exists(target) && !unmodified) {
+      conflicts.push(item.name);
+      continue;
+    }
+    await rm(target, { recursive: true, force: true });
+    if (item.backup_path && await exists(item.backup_path)) {
+      await cp(item.backup_path, target, { recursive: true });
+      await rm(item.backup_path, { recursive: true, force: true });
+    }
+  }
+  return { conflicts };
+}
+
+async function migrateLegacyInstallation({ vault, root, codexHome, previousInstall, taskManager }) {
+  if (previousInstall?.legacy_migration?.migrated) {
+    return { state: previousInstall.legacy_migration, rollback: async () => {} };
+  }
+  const legacyTarget = path.join(vault, ".obsidian", "plugins", LEGACY_PLUGIN_ID);
+  const manifest = await readJson(path.join(legacyTarget, "manifest.json"), null);
+  if (manifest?.id !== LEGACY_PLUGIN_ID) return { state: previousInstall?.legacy_migration || null, rollback: async () => {} };
+
+  const backup = path.join(root, "backups", "legacy", `${Date.now()}-${randomUUID()}`, LEGACY_PLUGIN_ID);
+  const communityPath = path.join(vault, ".obsidian", "community-plugins.json");
+  const communityBefore = await readJson(communityPath, null);
+  let tasks = [];
+  try {
+    await mkdir(path.dirname(backup), { recursive: true });
+    await cp(legacyTarget, backup, { recursive: true });
+    await rm(legacyTarget, { recursive: true, force: true });
+    if (Array.isArray(communityBefore)) await atomicJson(communityPath, replacePluginId(communityBefore, LEGACY_PLUGIN_ID, PLUGIN_ID));
+    tasks = await taskManager.disable(LEGACY_TASK_NAMES);
+    const receiverConfig = path.join(codexHome, "hooks", "chatgpt-web-receiver.json");
+    const state = {
+      migrated: true,
+      migrated_at: new Date().toISOString(),
+      plugin_version: String(manifest.version || "unknown"),
+      plugin_backup: backup,
+      legacy_was_enabled: Array.isArray(communityBefore) && communityBefore.includes(LEGACY_PLUGIN_ID),
+      legacy_tasks: tasks,
+      receiver_config_path: await exists(receiverConfig) ? receiverConfig : null
+    };
+    return {
+      state,
+      async rollback() {
+        await rm(legacyTarget, { recursive: true, force: true });
+        if (await exists(backup)) await cp(backup, legacyTarget, { recursive: true });
+        if (Array.isArray(communityBefore)) await atomicJson(communityPath, communityBefore);
+        await taskManager.restore(tasks);
+      }
+    };
+  } catch (error) {
+    await rm(legacyTarget, { recursive: true, force: true });
+    if (await exists(backup)) await cp(backup, legacyTarget, { recursive: true });
+    if (Array.isArray(communityBefore)) await atomicJson(communityPath, communityBefore);
+    await taskManager.restore(tasks).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function restoreLegacyInstallation({ vault, state, taskManager }) {
+  if (!state?.migrated) return { restored: false };
+  const target = path.join(vault, ".obsidian", "plugins", LEGACY_PLUGIN_ID);
+  let restored = false;
+  if (!await exists(target) && state.plugin_backup && await exists(state.plugin_backup)) {
+    await cp(state.plugin_backup, target, { recursive: true });
+    restored = true;
+  }
+  const communityPath = path.join(vault, ".obsidian", "community-plugins.json");
+  const community = await readJson(communityPath, null);
+  if (Array.isArray(community)) {
+    const withoutNew = community.filter((item) => item !== PLUGIN_ID);
+    if (restored && state.legacy_was_enabled && !withoutNew.includes(LEGACY_PLUGIN_ID)) withoutNew.push(LEGACY_PLUGIN_ID);
+    await atomicJson(communityPath, withoutNew);
+  }
+  await taskManager.restore(Array.isArray(state.legacy_tasks) ? state.legacy_tasks : []);
+  return { restored };
+}
+
+function createLegacyTaskManager(platform) {
+  if (platform !== "win32") return { disable: async () => [], restore: async () => {} };
+  return {
+    async disable(names) {
+      const result = [];
+      for (const name of names) {
+        const xml = await execFileAsync("schtasks.exe", ["/Query", "/TN", name, "/XML"], { timeout: 10_000, windowsHide: true })
+          .then((value) => String(value.stdout || "")).catch(() => "");
+        if (!xml) continue;
+        const wasEnabled = /<Enabled>\s*true\s*<\/Enabled>/i.test(xml);
+        await execFileAsync("schtasks.exe", ["/End", "/TN", name], { timeout: 10_000, windowsHide: true }).catch(() => undefined);
+        if (wasEnabled) await execFileAsync("schtasks.exe", ["/Change", "/TN", name, "/DISABLE"], { timeout: 10_000, windowsHide: true });
+        result.push({ name, was_enabled: wasEnabled });
+      }
+      return result;
+    },
+    async restore(states) {
+      for (const state of states) {
+        if (state?.was_enabled && LEGACY_TASK_NAMES.includes(state.name)) {
+          await execFileAsync("schtasks.exe", ["/Change", "/TN", state.name, "/ENABLE"], { timeout: 10_000, windowsHide: true });
+        }
+      }
+    }
+  };
+}
+
+async function replaceManagedDirectory(source, target) {
+  const staging = `${target}.staging-${randomUUID()}`;
+  const backup = await exists(target) ? `${target}.backup-${Date.now()}-${randomUUID()}` : null;
+  await mkdir(path.dirname(target), { recursive: true });
+  await cp(source, staging, { recursive: true });
+  if (backup) await rename(target, backup);
+  try {
+    await rename(staging, target);
+  } catch (error) {
+    if (backup) await rename(backup, target);
+    throw error;
+  }
+  return {
+    target,
+    async rollback() {
+      await rm(target, { recursive: true, force: true });
+      if (backup && await exists(backup)) await rename(backup, target);
+    },
+    async commit() { if (backup) await rm(backup, { recursive: true, force: true }); }
+  };
+}
+
+function replacePluginId(values, from, to) {
+  const result = [];
+  for (const value of values) {
+    const next = value === from ? to : value;
+    if (!result.includes(next)) result.push(next);
+  }
+  return result;
 }
 
 function cleanOwnedCommands(entry) {
@@ -256,6 +539,34 @@ async function replaceDirectory(staging, target) {
   if (backup) await rename(target, backup);
   try { await rename(staging, target); return backup; }
   catch (error) { if (backup) await rename(backup, target); throw error; }
+}
+
+async function hashDirectory(root, ignoredNames = new Set()) {
+  const hash = createHash("sha256");
+  if (!await exists(root)) return "";
+  for (const item of await listTree(root)) {
+    if (ignoredNames.has(path.basename(item.relative))) continue;
+    hash.update(item.relative.replace(/\\/g, "/"));
+    hash.update("\0");
+    if (item.type === "file") hash.update(await readFile(item.absolute));
+    else if (item.type === "link") hash.update(await readlink(item.absolute));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
+async function listTree(root, relative = "") {
+  const directory = path.join(root, relative);
+  const entries = await readdir(directory, { withFileTypes: true });
+  const result = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const childRelative = path.join(relative, entry.name);
+    const absolute = path.join(root, childRelative);
+    if (entry.isDirectory()) result.push(...await listTree(root, childRelative));
+    else if (entry.isFile()) result.push({ relative: childRelative, absolute, type: "file" });
+    else if (entry.isSymbolicLink()) result.push({ relative: childRelative, absolute, type: "link" });
+  }
+  return result;
 }
 
 async function atomicJson(target, value) {
@@ -283,9 +594,10 @@ async function exists(target) {
   try { await stat(target); return true; } catch { return false; }
 }
 
-async function commandAvailable(command) {
-  const locator = process.platform === "win32" ? "where.exe" : "which";
-  try { await execFileAsync(locator, [command], { timeout: 5_000, windowsHide: true }); return true; } catch { return false; }
+function equalPath(left, right) {
+  const a = path.resolve(String(left));
+  const b = path.resolve(String(right));
+  return process.platform === "win32" ? a.toLocaleLowerCase() === b.toLocaleLowerCase() : a === b;
 }
 
 export async function sha256File(target) {

@@ -1,12 +1,13 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import http, { type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { Notice, requestUrl, type App } from "obsidian";
 import { shell } from "electron";
+import { discoverExecutable } from "../../runtime/src/executable-discovery.mjs";
 
 const execFileAsync = promisify(execFile);
 const RECEIVER_PORT = 43123;
@@ -100,6 +101,8 @@ export class SuiteService {
   private health: SuiteHealth;
   private scheduleTimer?: number;
   private feishuDeviceCode = "";
+  private codexExecutable?: string;
+  private larkExecutable?: string;
 
   constructor(private readonly app: App, private readonly version: string) {
     this.health = {
@@ -148,6 +151,24 @@ export class SuiteService {
     new Notice("本机接收密钥已复制，请粘贴到浏览器扩展");
   }
 
+  async openBrowserExtensionFolder(): Promise<void> {
+    const install = await readJson(path.join(configRoot(), "install.json"), null);
+    const target = typeof install?.browser_extension_root === "string"
+      ? install.browser_extension_root : path.join(configRoot(), "browser-extension");
+    const manifest = await readJson(path.join(target, "manifest.json"), null);
+    if (!manifest?.version) {
+      new Notice("浏览器扩展尚未安装，请先重新运行知行台安装器");
+      return;
+    }
+    const error = await shell.openPath(target);
+    if (error) {
+      console.error("Zhixing browser extension folder open failed", error);
+      new Notice("浏览器扩展目录无法打开，请在诊断信息中查看路径");
+      return;
+    }
+    new Notice("已打开浏览器扩展目录，请在浏览器中选择“加载已解压的扩展”");
+  }
+
   async checkForUpdate(): Promise<void> {
     try {
       const response = await requestUrl({ url: RELEASE_API, method: "GET" });
@@ -170,7 +191,8 @@ export class SuiteService {
     try {
       await this.runFeishuSyncNow(false);
       await execFileAsync(process.execPath, [runner, "--vault", this.vaultBasePath(), "--trigger", "manual"], {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1" },
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+          ...(this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}) },
         timeout: 6 * 60 * 60_000,
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024
@@ -187,12 +209,14 @@ export class SuiteService {
 
   async refreshHealth(): Promise<void> {
     await this.findProgramRoot();
-    const codex = await executableAvailable(process.platform === "win32" ? "codex.exe" : "codex");
+    const [codex, lark] = await Promise.all([discoverExecutable("codex"), discoverExecutable("lark-cli")]);
+    this.codexExecutable = codex?.path;
+    this.larkExecutable = lark?.path;
     const lastCycle = await readJson(path.join(this.vaultBasePath(), "raw", "codex", "automation", "last-cycle.json"), null);
     const feishu = await this.readFeishuHealth();
     this.setHealth({
       runtime: this.programRoot ? "ready" : "unavailable",
-      codex: codex ? "ready" : "unavailable",
+      codex: this.codexExecutable ? "ready" : "unavailable",
       lastCycle: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : undefined,
       feishu
     });
@@ -223,7 +247,7 @@ export class SuiteService {
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,
       env: larkCliEnv()
-    });
+    }, this.larkExecutable);
     const payload = parseCommandJson(`${result.stdout}\n${result.stderr}`);
     const verificationUrl = String(payload.verification_url || payload.data?.verification_url || "");
     const deviceCode = String(payload.device_code || payload.data?.device_code || "");
@@ -240,7 +264,7 @@ export class SuiteService {
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,
       env: larkCliEnv()
-    });
+    }, this.larkExecutable);
     this.feishuDeviceCode = "";
     await this.refreshHealth();
   }
@@ -253,7 +277,8 @@ export class SuiteService {
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "正在同步飞书" } });
     try {
       await execFileAsync(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1" },
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+          ...(this.larkExecutable ? { LARK_CLI_BIN: this.larkExecutable } : {}) },
         timeout: 30 * 60_000,
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024
@@ -410,7 +435,7 @@ export class SuiteService {
 
   private async readFeishuHealth(): Promise<FeishuHealth> {
     const config = await this.getFeishuConfig();
-    const cli = await executableAvailable(process.platform === "win32" ? "lark-cli.cmd" : "lark-cli");
+    const cli = Boolean(this.larkExecutable);
     const state = await readJson(path.join(this.vaultBasePath(), "raw", "feishu", "sync-state.json"), {});
     const enabledModules = Object.entries(config.modules).filter(([, enabled]) => enabled).map(([key]) => key);
     const pending = config.enabled ? await countPendingFeishu(this.vaultBasePath()) : 0;
@@ -467,11 +492,6 @@ function configRoot(): string {
   if (process.platform === "win32") return path.join(process.env.APPDATA || path.join(homedir(), "AppData", "Roaming"), "ZhixingWorkbench");
   if (process.platform === "darwin") return path.join(homedir(), "Library", "Application Support", "ZhixingWorkbench");
   return path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "zhixing-workbench");
-}
-
-async function executableAvailable(name: string): Promise<boolean> {
-  const locator = process.platform === "win32" ? "where.exe" : "which";
-  try { await execFileAsync(locator, [name], { timeout: 5_000, windowsHide: true }); return true; } catch { return false; }
 }
 
 async function readJson(target: string, fallback: any): Promise<any> {
@@ -650,18 +670,9 @@ function larkCliEnv(): NodeJS.ProcessEnv {
   return { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" };
 }
 
-async function executeLarkCli(args: string[], options: Parameters<typeof execFileAsync>[2]): Promise<{ stdout: string; stderr: string }> {
-  let executable = "lark-cli";
-  if (process.platform === "win32") {
-    const located = await execFileAsync("where.exe", ["lark-cli.cmd"], { timeout: 5_000, windowsHide: true })
-      .then((result) => String(result.stdout).split(/\r?\n/).map((value) => value.trim()).filter(Boolean));
-    executable = "";
-    for (const shim of located) {
-      const candidate = path.join(path.dirname(shim), "node_modules", "@larksuite", "cli", "bin", "lark-cli.exe");
-      try { await access(candidate); executable = candidate; break; } catch {}
-    }
-    if (!executable) throw new Error("未找到官方 lark-cli 可执行文件，请重新安装最新版 @larksuite/cli");
-  }
+async function executeLarkCli(args: string[], options: Parameters<typeof execFileAsync>[2], located?: string): Promise<{ stdout: string; stderr: string }> {
+  const executable = located || (await discoverExecutable("lark-cli"))?.path;
+  if (!executable) throw new Error("未找到官方 lark-cli，请重新安装最新版 @larksuite/cli");
   const result = await execFileAsync(executable, args, options);
   return { stdout: String(result.stdout || ""), stderr: String(result.stderr || "") };
 }

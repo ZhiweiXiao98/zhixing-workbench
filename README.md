@@ -8,12 +8,12 @@
 
 ## 支持平台
 
-| 平台 | 首版支持 |
+| 平台 | 支持与验证 |
 | --- | --- |
-| Windows x64 | 完整支持 |
-| macOS Apple Silicon | 完整支持 |
-| macOS Intel | 完整支持 |
-| Ubuntu x64 | 完整支持 |
+| Windows x64 | 支持；发布门禁在 Windows runner 执行真实安装包生命周期 |
+| macOS Apple Silicon | 支持；发布门禁在 `macos-15` arm64 runner 执行真实安装包生命周期 |
+| macOS Intel | 支持；发布门禁在 `macos-15-intel` x64 runner 执行真实安装包生命周期 |
+| Ubuntu x64 | 支持；发布门禁在 Ubuntu runner 执行真实安装包生命周期 |
 | Chrome / Edge / Chromium | ChatGPT 自动采集 |
 | 飞书 / Lark | 可选只读连接器，需要官方 `lark-cli` 和用户授权 |
 | Safari | 暂未支持浏览器采集 |
@@ -21,15 +21,16 @@
 ## 安装
 
 1. 从 [Releases](https://github.com/ZhiweiXiao98/zhixing-workbench/releases) 下载与你系统对应的压缩包并解压。
-2. 确认已安装 Node.js 22 或更高版本，然后在解压目录运行：
+2. 确认已安装 Node.js 22 或更高版本。Windows 双击根目录的 `安装知行台.cmd`；macOS 与 Ubuntu 在解压目录运行：
 
 ```bash
-node scripts/zhixing.mjs install --vault "/path/to/your/vault"
+sh install-zhixing.sh
 ```
 
 3. 在 Obsidian 的“设置 → 第三方插件”启用“知行台”。
-4. 打开知行台的“整理记录”，复制本机接收密钥；在 Chrome、Edge 或 Chromium 中加载压缩包里的 `browser-extension` 文件夹并粘贴密钥。
-5. 安装器会追加知行台自己的 Codex Hook，并保留原有 Hook；使用 `--skip-hooks` 可以跳过。
+4. 打开知行台的“整理记录”，点击文件夹图标打开浏览器扩展的固定目录；在 Chrome、Edge 或 Chromium 中选择“加载已解压的扩展”并指向这个目录。
+5. 点击钥匙图标复制本机接收密钥，在扩展的“本机连接”中粘贴并检查连接。
+6. 安装器会追加知行台自己的 Codex Hook，并保留原有 Hook；使用命令行安装时可用 `--skip-hooks` 跳过。
 
 ### 可选：连接飞书
 
@@ -58,7 +59,7 @@ npm install -g @larksuite/cli@latest
 也可以把本仓库作为 Codex 插件市场加入，再安装三个中文 Skill：
 
 ```bash
-codex plugin marketplace add ZhiweiXiao98/zhixing-workbench --ref v0.6.0
+codex plugin marketplace add ZhiweiXiao98/zhixing-workbench --ref v0.6.1
 codex plugin add zhixing-workbench@zhixing-workbench
 ```
 
@@ -80,7 +81,9 @@ node scripts/zhixing.mjs update --check
 node scripts/zhixing.mjs update --confirm
 ```
 
-更新前会备份当前程序并验证 SHA256。更新范围只包含插件、运行时、技能、Hook 程序和浏览器扩展；不会覆盖 `raw/`、`wiki/`、`成果/`、手写笔记或设备配置。
+更新前会备份当前程序并验证 SHA256。浏览器扩展始终更新到同一个设备目录，更新后在浏览器扩展管理页点击一次“重新加载”即可继续使用。更新范围只包含插件、运行时、套件拥有且未被用户修改的 Skill、Hook 程序和浏览器扩展；不会覆盖 `raw/`、`wiki/`、`成果/`、手写笔记或设备配置。
+
+首次安装发现同名 Skill 时会先备份，卸载时恢复。已经被用户修改的 Skill 会保留并报告冲突，不会静默覆盖或删除。
 
 ## 诊断与卸载
 

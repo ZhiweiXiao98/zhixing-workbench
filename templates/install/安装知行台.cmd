@@ -12,6 +12,14 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-set /p VAULT=请粘贴 Obsidian Vault 文件夹路径:
-node "%~dp0..\..\scripts\zhixing.mjs" install --vault "%VAULT%"
-pause
+set "INTERACTIVE=1"
+if not "%~1"=="" (
+  set "VAULT=%~1"
+  set "INTERACTIVE=0"
+) else (
+  set /p VAULT=请粘贴 Obsidian Vault 文件夹路径:
+)
+node "%~dp0scripts\zhixing.mjs" install --vault "%VAULT%"
+set "INSTALL_EXIT=%ERRORLEVEL%"
+if "%INTERACTIVE%"=="1" pause
+exit /b %INSTALL_EXIT%

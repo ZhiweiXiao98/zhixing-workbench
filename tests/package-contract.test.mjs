@@ -23,6 +23,37 @@ test("浏览器扩展不携带固定密钥文件", async () => {
   assert.match(worker, /chrome\.storage\.local/);
 });
 
+test("Release 根目录安装入口调用同目录 scripts", async () => {
+  const windows = await readFile("templates/install/安装知行台.cmd", "utf8");
+  const unix = await readFile("templates/install/install-zhixing.sh", "utf8");
+  assert.match(windows, /%~dp0scripts\\zhixing\.mjs/i);
+  assert.doesNotMatch(windows, /\.\.\\\.\.\\scripts/i);
+  assert.match(unix, /\$script_dir\/scripts\/zhixing\.mjs/);
+  assert.doesNotMatch(unix, /\.\.\/\.\.\/scripts/);
+});
+
+test("Obsidian 提供稳定浏览器扩展目录入口", async () => {
+  const service = await readFile("packages/obsidian-plugin/src/suite-service.ts", "utf8");
+  const view = await readFile("packages/obsidian-plugin/src/view.ts", "utf8");
+  assert.match(service, /browser_extension_root/);
+  assert.match(service, /shell\.openPath\(target\)/);
+  assert.match(view, /open-browser-extension-folder/);
+});
+
+test("CI 与 Release 只发布四端共同验证的同一候选资产", async () => {
+  for (const target of [".github/workflows/ci.yml", ".github/workflows/release.yml"]) {
+    const workflow = await readFile(target, "utf8");
+    assert.equal(workflow.match(/npm run package:release/g)?.length, 1, `${target} 只能打包一次`);
+    assert.match(workflow, /actions\/upload-artifact@v4/);
+    assert.ok((workflow.match(/actions\/download-artifact@v4/g)?.length || 0) >= 1);
+    assert.match(workflow, /needs: package-candidate/);
+  }
+  const releaseWorkflow = await readFile(".github/workflows/release.yml", "utf8");
+  const publishJob = releaseWorkflow.slice(releaseWorkflow.indexOf("\n  release:"));
+  assert.doesNotMatch(publishJob, /package:release|package:verify|npm run build/);
+  assert.match(publishJob, /actions\/download-artifact@v4/);
+});
+
 test("浏览器采集核心识别已保存对话并按问答配对", async () => {
   const context = vm.createContext({ URL });
   vm.runInContext(await readFile("packages/browser-extension/capture-core.js", "utf8"), context);

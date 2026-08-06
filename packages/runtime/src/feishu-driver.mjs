@@ -35,7 +35,7 @@ export class FeishuDriverError extends Error {
 
 export class LarkCliDriver {
   constructor(options = {}) {
-    this.bin = options.bin || (process.platform === "win32" ? "lark-cli.cmd" : "lark-cli");
+    this.bin = options.bin || process.env.LARK_CLI_BIN || (process.platform === "win32" ? "lark-cli.cmd" : "lark-cli");
     this.exec = options.exec || executeFile;
   }
 

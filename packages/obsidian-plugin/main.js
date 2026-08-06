@@ -658,8 +658,8 @@ var ArtifactWriter = class {
   async findManagedFiles(errors) {
     const entries = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
-      const path7 = (0, import_obsidian.normalizePath)(file.path);
-      const pathInfo = managedPathInfo(path7);
+      const path8 = (0, import_obsidian.normalizePath)(file.path);
+      const pathInfo = managedPathInfo(path8);
       if (!pathInfo) {
         continue;
       }
@@ -668,17 +668,17 @@ var ArtifactWriter = class {
         const metadata = readManagedArtifactMetadata(content);
         if (!metadata || metadata.date !== pathInfo.date || metadata.id.startsWith("daily:") !== pathInfo.daily) {
           if (/^zhixing_generated:\s*true\s*$/m.test(content)) {
-            errors.push(`${path7}: \u6258\u7BA1\u6587\u4EF6\u7684 frontmatter\u3001ID \u6216\u6807\u8BB0\u65E0\u6548\uFF0C\u5DF2\u8DF3\u8FC7`);
+            errors.push(`${path8}: \u6258\u7BA1\u6587\u4EF6\u7684 frontmatter\u3001ID \u6216\u6807\u8BB0\u65E0\u6548\uFF0C\u5DF2\u8DF3\u8FC7`);
           }
           continue;
         }
         if (pathInfo.daily && metadata.id !== `daily:${pathInfo.date}`) {
-          errors.push(`${path7}: \u65E5\u7D22\u5F15 ID \u4E0D\u5339\u914D\uFF0C\u5DF2\u8DF3\u8FC7`);
+          errors.push(`${path8}: \u65E5\u7D22\u5F15 ID \u4E0D\u5339\u914D\uFF0C\u5DF2\u8DF3\u8FC7`);
           continue;
         }
         entries.push({
           file,
-          path: path7,
+          path: path8,
           id: metadata.id,
           date: metadata.date,
           daily: pathInfo.daily,
@@ -686,7 +686,7 @@ var ArtifactWriter = class {
           title: metadata.title
         });
       } catch (error) {
-        errors.push(`${path7}: ${errorMessage(error)}`);
+        errors.push(`${path8}: ${errorMessage(error)}`);
       }
     }
     return entries;
@@ -951,12 +951,12 @@ function compareManagedCopies(left, right) {
   const rightPrimary = /\/成果-[0-9a-f]{12}\.md$/.test(right.path) ? 0 : 1;
   return leftPrimary - rightPrimary || left.path.localeCompare(right.path);
 }
-function managedPathInfo(path7) {
-  const daily = path7.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\.md$/);
+function managedPathInfo(path8) {
+  const daily = path8.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\.md$/);
   if (daily?.[1] && isValidLocalDate(daily[1])) {
     return { date: daily[1], daily: true };
   }
-  const readable = path7.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\/[^/]+\.md$/);
+  const readable = path8.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\/[^/]+\.md$/);
   if (readable?.[1] && isValidLocalDate(readable[1])) {
     return { date: readable[1], daily: false };
   }
@@ -4059,8 +4059,8 @@ function projectFromCwd(cwd) {
   }
   return identity(label, false);
 }
-function projectFromWikiPath(path7) {
-  const segments = path7.replace(/\\/g, "/").split("/");
+function projectFromWikiPath(path8) {
+  const segments = path8.replace(/\\/g, "/").split("/");
   const folder = segments.length >= 3 ? segments[1] : "\u901A\u7528";
   const label = folder === "\u8865\u5145" || folder?.startsWith("_") ? "\u77E5\u8BC6\u5E93" : folder ?? "\u77E5\u8BC6\u5E93";
   return identity(label, true);
@@ -4111,9 +4111,9 @@ function projectLabelPriority(sourceTypes) {
   }
   return 0;
 }
-function basename(path7) {
-  const parts = path7.split("\\").filter(Boolean);
-  return parts.at(-1) ?? path7;
+function basename(path8) {
+  const parts = path8.split("\\").filter(Boolean);
+  return parts.at(-1) ?? path8;
 }
 
 // src/core/task-identity.ts
@@ -4670,11 +4670,11 @@ function wikiEvent(document, title, project, date, occurredAt, kind, records, ti
     const source = record.source === "chatgpt_web" ? "chatgpt" : "codex";
     dailyPaths.add(`raw/${source}/daily/${toLocalDate(record.captured_at)}.md`);
   }
-  for (const path7 of dailyPaths) {
+  for (const path8 of dailyPaths) {
     sourceRefs.push({
-      type: path7.includes("/chatgpt/") ? "chatgpt" : "codex",
+      type: path8.includes("/chatgpt/") ? "chatgpt" : "codex",
       label: "\u539F\u59CB\u6765\u6E90\u9875",
-      path: path7
+      path: path8
     });
   }
   return {
@@ -5434,20 +5434,20 @@ function knowledgeChanges(value) {
       return [];
     }
     const action = stringValue3(item.action);
-    const path7 = stringValue3(item.path);
-    if (action !== "created" && action !== "updated" || !path7) {
+    const path8 = stringValue3(item.path);
+    if (action !== "created" && action !== "updated" || !path8) {
       return [];
     }
     return [{
       action,
-      path: path7,
-      title: stringValue3(item.title) || fileTitle2(path7),
+      path: path8,
+      title: stringValue3(item.title) || fileTitle2(path8),
       role: item.role === "memory" || item.role === "evidence" ? item.role : void 0
     }];
   });
 }
-function fileTitle2(path7) {
-  return path7.split(/[\\/]/).at(-1)?.replace(/\.md$/i, "") || "\u77E5\u8BC6\u7B14\u8BB0";
+function fileTitle2(path8) {
+  return path8.split(/[\\/]/).at(-1)?.replace(/\.md$/i, "") || "\u77E5\u8BC6\u7B14\u8BB0";
 }
 function stringArray2(value) {
   return Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === "string" && Boolean(item.trim())))] : [];
@@ -5617,19 +5617,19 @@ var VaultSource = class {
     const rawPaths = new Set(rawFiles.map((file) => file.path));
     const wikiPaths = new Set(wikiFiles.map((file) => file.path));
     const ingestHistoryPaths = new Set(ingestHistoryFiles.map((file) => file.path));
-    for (const path7 of this.rawCache.keys()) {
-      if (!rawPaths.has(path7)) {
-        this.rawCache.delete(path7);
+    for (const path8 of this.rawCache.keys()) {
+      if (!rawPaths.has(path8)) {
+        this.rawCache.delete(path8);
       }
     }
-    for (const path7 of this.wikiCache.keys()) {
-      if (!wikiPaths.has(path7)) {
-        this.wikiCache.delete(path7);
+    for (const path8 of this.wikiCache.keys()) {
+      if (!wikiPaths.has(path8)) {
+        this.wikiCache.delete(path8);
       }
     }
-    for (const path7 of this.ingestHistoryCache.keys()) {
-      if (!ingestHistoryPaths.has(path7)) {
-        this.ingestHistoryCache.delete(path7);
+    for (const path8 of this.ingestHistoryCache.keys()) {
+      if (!ingestHistoryPaths.has(path8)) {
+        this.ingestHistoryCache.delete(path8);
       }
     }
   }
@@ -5791,8 +5791,8 @@ function selectEligibleCodexStops(records, eligibleTurnKeys) {
 function recordTurnKey(record) {
   return `${record.session_id}:${record.turn_id}`;
 }
-function isActivityPath(path7) {
-  return /^raw\/(codex|chatgpt|feishu)\/(events|daily)\//i.test(path7) || /^raw\/codex\/(ingest-history\/|automation\/.*\.log$|ingest-status\.json$|knowledge-settlements\.json$)/i.test(path7) || path7.startsWith("wiki/");
+function isActivityPath(path8) {
+  return /^raw\/(codex|chatgpt|feishu)\/(events|daily)\//i.test(path8) || /^raw\/codex\/(ingest-history\/|automation\/.*\.log$|ingest-status\.json$|knowledge-settlements\.json$)/i.test(path8) || path8.startsWith("wiki/");
 }
 
 // src/graph-filter.ts
@@ -6440,6 +6440,8 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
     const updateLabel = health.update === "available" ? `\u53EF\u66F4\u65B0 ${health.latestVersion}` : health.update === "current" ? "\u5DF2\u662F\u6700\u65B0\u7248" : "\u68C0\u67E5\u66F4\u65B0";
     const copy = this.iconButton(panel, "key-round", "\u590D\u5236\u6D4F\u89C8\u5668\u63A5\u6536\u5BC6\u94A5", "copy-receiver-token");
     copy.addEventListener("click", () => void this.suite.copyReceiverToken());
+    const extension = this.iconButton(panel, "folder-open", "\u6253\u5F00\u6D4F\u89C8\u5668\u6269\u5C55\u76EE\u5F55", "open-browser-extension-folder");
+    extension.addEventListener("click", () => void this.suite.openBrowserExtensionFolder());
     const run = this.iconButton(panel, health.running ? "loader-circle" : "sparkles", health.running ? "\u6B63\u5728\u6574\u7406" : "\u7ACB\u5373\u6574\u7406", "run-knowledge-now");
     run.disabled = health.runtime !== "ready" || health.codex !== "ready" || health.running;
     run.addEventListener("click", () => void this.suite.runKnowledgeNow());
@@ -7354,15 +7356,96 @@ function isAbsolutePath(value) {
 
 // src/suite-service.ts
 var import_node_crypto5 = require("node:crypto");
-var import_node_child_process2 = require("node:child_process");
-var import_promises4 = require("node:fs/promises");
+var import_node_child_process3 = require("node:child_process");
+var import_promises5 = require("node:fs/promises");
 var import_node_http = __toESM(require("node:http"), 1);
-var import_node_os2 = require("node:os");
-var import_node_path6 = __toESM(require("node:path"), 1);
-var import_node_util2 = require("node:util");
+var import_node_os3 = require("node:os");
+var import_node_path7 = __toESM(require("node:path"), 1);
+var import_node_util3 = require("node:util");
 var import_obsidian5 = require("obsidian");
 var import_electron2 = require("electron");
+
+// ../runtime/src/executable-discovery.mjs
+var import_node_fs = require("node:fs");
+var import_promises4 = require("node:fs/promises");
+var import_node_os2 = require("node:os");
+var import_node_path6 = __toESM(require("node:path"), 1);
+var import_node_child_process2 = require("node:child_process");
+var import_node_util2 = require("node:util");
 var execFileAsync2 = (0, import_node_util2.promisify)(import_node_child_process2.execFile);
+async function discoverExecutable(name, options = {}) {
+  const platform = options.platform || process.platform;
+  const home = options.home || (0, import_node_os2.homedir)();
+  const env = options.env || process.env;
+  const executableName = platform === "win32" && name === "codex" ? "codex.exe" : platform === "win32" && name === "lark-cli" ? "lark-cli.cmd" : name;
+  const located = await locateFromPath(executableName, platform, env, options.execFile || execFileAsync2);
+  for (const candidate of located) {
+    const resolved = await normalizeCandidate(name, candidate, platform, options.access || import_promises4.access);
+    if (resolved) return { path: resolved, source: "path" };
+  }
+  if (platform === "win32") return null;
+  const candidates = [
+    ...splitPath(env.PATH, platform).map((directory) => import_node_path6.default.join(directory, name)),
+    import_node_path6.default.join(home, ".local", "bin", name),
+    import_node_path6.default.join(home, ".npm-global", "bin", name),
+    import_node_path6.default.join(home, ".volta", "bin", name),
+    import_node_path6.default.join(home, ".asdf", "shims", name),
+    import_node_path6.default.join(home, ".local", "share", "mise", "shims", name),
+    import_node_path6.default.join(home, ".bun", "bin", name),
+    `/opt/homebrew/bin/${name}`,
+    `/usr/local/bin/${name}`,
+    `/usr/bin/${name}`
+  ];
+  for (const directory of await nodeVersionBins(home, options.readdir || import_promises4.readdir)) {
+    candidates.push(import_node_path6.default.join(directory, name));
+  }
+  for (const candidate of unique3(candidates)) {
+    if (await isExecutable(candidate, options.access || import_promises4.access)) return { path: candidate, source: "common-location" };
+  }
+  return null;
+}
+async function locateFromPath(name, platform, env, execute) {
+  const locator = platform === "win32" ? "where.exe" : "/usr/bin/which";
+  try {
+    const result = await execute(locator, [name], { env, timeout: 5e3, windowsHide: true });
+    return String(result.stdout || "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+async function normalizeCandidate(name, candidate, platform, checkAccess) {
+  if (platform === "win32" && name === "lark-cli" && /lark-cli\.cmd$/i.test(candidate)) {
+    const native = import_node_path6.default.join(import_node_path6.default.dirname(candidate), "node_modules", "@larksuite", "cli", "bin", "lark-cli.exe");
+    return await isExecutable(native, checkAccess, false) ? native : null;
+  }
+  return await isExecutable(candidate, checkAccess, platform !== "win32") ? candidate : null;
+}
+async function isExecutable(candidate, checkAccess, requireExecute = true) {
+  try {
+    await checkAccess(candidate, requireExecute ? import_node_fs.constants.X_OK : import_node_fs.constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function nodeVersionBins(home, readDirectory) {
+  const root = import_node_path6.default.join(home, ".nvm", "versions", "node");
+  try {
+    const versions = (await readDirectory(root, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().reverse();
+    return versions.map((version) => import_node_path6.default.join(root, version, "bin"));
+  } catch {
+    return [];
+  }
+}
+function splitPath(value, platform) {
+  return String(value || "").split(platform === "win32" ? ";" : ":").map((item) => item.trim()).filter(Boolean);
+}
+function unique3(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+// src/suite-service.ts
+var execFileAsync3 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
 var RECEIVER_PORT = 43123;
 var RELEASE_API = "https://api.github.com/repos/ZhiweiXiao98/zhixing-workbench/releases/latest";
 var SuiteService = class {
@@ -7390,6 +7473,8 @@ var SuiteService = class {
   health;
   scheduleTimer;
   feishuDeviceCode = "";
+  codexExecutable;
+  larkExecutable;
   async start() {
     const device = await this.ensureDeviceConfig();
     this.token = device.receiver_token;
@@ -7419,6 +7504,22 @@ var SuiteService = class {
     await navigator.clipboard.writeText(this.token);
     new import_obsidian5.Notice("\u672C\u673A\u63A5\u6536\u5BC6\u94A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u7C98\u8D34\u5230\u6D4F\u89C8\u5668\u6269\u5C55");
   }
+  async openBrowserExtensionFolder() {
+    const install = await readJson(import_node_path7.default.join(configRoot(), "install.json"), null);
+    const target = typeof install?.browser_extension_root === "string" ? install.browser_extension_root : import_node_path7.default.join(configRoot(), "browser-extension");
+    const manifest = await readJson(import_node_path7.default.join(target, "manifest.json"), null);
+    if (!manifest?.version) {
+      new import_obsidian5.Notice("\u6D4F\u89C8\u5668\u6269\u5C55\u5C1A\u672A\u5B89\u88C5\uFF0C\u8BF7\u5148\u91CD\u65B0\u8FD0\u884C\u77E5\u884C\u53F0\u5B89\u88C5\u5668");
+      return;
+    }
+    const error = await import_electron2.shell.openPath(target);
+    if (error) {
+      console.error("Zhixing browser extension folder open failed", error);
+      new import_obsidian5.Notice("\u6D4F\u89C8\u5668\u6269\u5C55\u76EE\u5F55\u65E0\u6CD5\u6253\u5F00\uFF0C\u8BF7\u5728\u8BCA\u65AD\u4FE1\u606F\u4E2D\u67E5\u770B\u8DEF\u5F84");
+      return;
+    }
+    new import_obsidian5.Notice("\u5DF2\u6253\u5F00\u6D4F\u89C8\u5668\u6269\u5C55\u76EE\u5F55\uFF0C\u8BF7\u5728\u6D4F\u89C8\u5668\u4E2D\u9009\u62E9\u201C\u52A0\u8F7D\u5DF2\u89E3\u538B\u7684\u6269\u5C55\u201D");
+  }
   async checkForUpdate() {
     try {
       const response = await (0, import_obsidian5.requestUrl)({ url: RELEASE_API, method: "GET" });
@@ -7436,11 +7537,16 @@ var SuiteService = class {
   async runKnowledgeNow() {
     if (!this.programRoot || this.health.running) return;
     this.setHealth({ running: true });
-    const runner = import_node_path6.default.join(this.programRoot, "runtime", "run-cycle.mjs");
+    const runner = import_node_path7.default.join(this.programRoot, "runtime", "run-cycle.mjs");
     try {
       await this.runFeishuSyncNow(false);
-      await execFileAsync2(process.execPath, [runner, "--vault", this.vaultBasePath(), "--trigger", "manual"], {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1" },
+      await execFileAsync3(process.execPath, [runner, "--vault", this.vaultBasePath(), "--trigger", "manual"], {
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "1",
+          ZHIXING_CAPTURE_DISABLED: "1",
+          ...this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}
+        },
         timeout: 6 * 60 * 6e4,
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024
@@ -7456,12 +7562,14 @@ var SuiteService = class {
   }
   async refreshHealth() {
     await this.findProgramRoot();
-    const codex = await executableAvailable(process.platform === "win32" ? "codex.exe" : "codex");
-    const lastCycle = await readJson(import_node_path6.default.join(this.vaultBasePath(), "raw", "codex", "automation", "last-cycle.json"), null);
+    const [codex, lark] = await Promise.all([discoverExecutable("codex"), discoverExecutable("lark-cli")]);
+    this.codexExecutable = codex?.path;
+    this.larkExecutable = lark?.path;
+    const lastCycle = await readJson(import_node_path7.default.join(this.vaultBasePath(), "raw", "codex", "automation", "last-cycle.json"), null);
     const feishu = await this.readFeishuHealth();
     this.setHealth({
       runtime: this.programRoot ? "ready" : "unavailable",
-      codex: codex ? "ready" : "unavailable",
+      codex: this.codexExecutable ? "ready" : "unavailable",
       lastCycle: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : void 0,
       feishu
     });
@@ -7490,7 +7598,7 @@ var SuiteService = class {
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,
       env: larkCliEnv()
-    });
+    }, this.larkExecutable);
     const payload = parseCommandJson(`${result.stdout}
 ${result.stderr}`);
     const verificationUrl = String(payload.verification_url || payload.data?.verification_url || "");
@@ -7507,7 +7615,7 @@ ${result.stderr}`);
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,
       env: larkCliEnv()
-    });
+    }, this.larkExecutable);
     this.feishuDeviceCode = "";
     await this.refreshHealth();
   }
@@ -7515,11 +7623,16 @@ ${result.stderr}`);
     if (!this.programRoot || this.health.feishu.syncing) return;
     const config = await this.getFeishuConfig();
     if (!config.enabled) return;
-    const runner = import_node_path6.default.join(this.programRoot, "runtime", "feishu-cli.mjs");
+    const runner = import_node_path7.default.join(this.programRoot, "runtime", "feishu-cli.mjs");
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "\u6B63\u5728\u540C\u6B65\u98DE\u4E66" } });
     try {
-      await execFileAsync2(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1" },
+      await execFileAsync3(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: "1",
+          ZHIXING_CAPTURE_DISABLED: "1",
+          ...this.larkExecutable ? { LARK_CLI_BIN: this.larkExecutable } : {}
+        },
         timeout: 30 * 6e4,
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024
@@ -7641,7 +7754,7 @@ ${result.stderr}`);
   }
   async ensureDeviceConfig() {
     const root = configRoot();
-    const target = import_node_path6.default.join(root, "device.json");
+    const target = import_node_path7.default.join(root, "device.json");
     const existing = await readJson(target, null);
     if (existing?.receiver_token && String(existing.receiver_token).length >= 24) return existing;
     const created = {
@@ -7655,11 +7768,11 @@ ${result.stderr}`);
     return created;
   }
   async findProgramRoot() {
-    const install = await readJson(import_node_path6.default.join(configRoot(), "install.json"), null);
+    const install = await readJson(import_node_path7.default.join(configRoot(), "install.json"), null);
     if (typeof install?.program_root === "string") {
-      const runner = import_node_path6.default.join(install.program_root, "runtime", "run-cycle.mjs");
+      const runner = import_node_path7.default.join(install.program_root, "runtime", "run-cycle.mjs");
       try {
-        await (0, import_promises4.readFile)(runner, "utf8");
+        await (0, import_promises5.readFile)(runner, "utf8");
         this.programRoot = install.program_root;
         return;
       } catch {
@@ -7680,8 +7793,8 @@ ${result.stderr}`);
   }
   async readFeishuHealth() {
     const config = await this.getFeishuConfig();
-    const cli = await executableAvailable(process.platform === "win32" ? "lark-cli.cmd" : "lark-cli");
-    const state = await readJson(import_node_path6.default.join(this.vaultBasePath(), "raw", "feishu", "sync-state.json"), {});
+    const cli = Boolean(this.larkExecutable);
+    const state = await readJson(import_node_path7.default.join(this.vaultBasePath(), "raw", "feishu", "sync-state.json"), {});
     const enabledModules = Object.entries(config.modules).filter(([, enabled]) => enabled).map(([key]) => key);
     const pending = config.enabled ? await countPendingFeishu(this.vaultBasePath()) : 0;
     if (!config.enabled) {
@@ -7733,33 +7846,24 @@ ${result.stderr}`);
   }
 };
 function configRoot() {
-  if (process.env.ZHIXING_CONFIG) return import_node_path6.default.resolve(process.env.ZHIXING_CONFIG);
-  if (process.platform === "win32") return import_node_path6.default.join(process.env.APPDATA || import_node_path6.default.join((0, import_node_os2.homedir)(), "AppData", "Roaming"), "ZhixingWorkbench");
-  if (process.platform === "darwin") return import_node_path6.default.join((0, import_node_os2.homedir)(), "Library", "Application Support", "ZhixingWorkbench");
-  return import_node_path6.default.join(process.env.XDG_CONFIG_HOME || import_node_path6.default.join((0, import_node_os2.homedir)(), ".config"), "zhixing-workbench");
-}
-async function executableAvailable(name) {
-  const locator = process.platform === "win32" ? "where.exe" : "which";
-  try {
-    await execFileAsync2(locator, [name], { timeout: 5e3, windowsHide: true });
-    return true;
-  } catch {
-    return false;
-  }
+  if (process.env.ZHIXING_CONFIG) return import_node_path7.default.resolve(process.env.ZHIXING_CONFIG);
+  if (process.platform === "win32") return import_node_path7.default.join(process.env.APPDATA || import_node_path7.default.join((0, import_node_os3.homedir)(), "AppData", "Roaming"), "ZhixingWorkbench");
+  if (process.platform === "darwin") return import_node_path7.default.join((0, import_node_os3.homedir)(), "Library", "Application Support", "ZhixingWorkbench");
+  return import_node_path7.default.join(process.env.XDG_CONFIG_HOME || import_node_path7.default.join((0, import_node_os3.homedir)(), ".config"), "zhixing-workbench");
 }
 async function readJson(target, fallback) {
   try {
-    return JSON.parse(await (0, import_promises4.readFile)(target, "utf8"));
+    return JSON.parse(await (0, import_promises5.readFile)(target, "utf8"));
   } catch {
     return fallback;
   }
 }
 async function atomicJson(target, value) {
-  await (0, import_promises4.mkdir)(import_node_path6.default.dirname(target), { recursive: true });
+  await (0, import_promises5.mkdir)(import_node_path7.default.dirname(target), { recursive: true });
   const temporary = `${target}.${process.pid}.tmp`;
-  await (0, import_promises4.writeFile)(temporary, `${JSON.stringify(value, null, 2)}
+  await (0, import_promises5.writeFile)(temporary, `${JSON.stringify(value, null, 2)}
 `, "utf8");
-  await (0, import_promises4.rename)(temporary, target);
+  await (0, import_promises5.rename)(temporary, target);
 }
 function localDate(value = /* @__PURE__ */ new Date()) {
   const year = value.getFullYear();
@@ -7889,18 +7993,18 @@ function parseCommandJson(value) {
 }
 async function countPendingFeishu(vault) {
   const processed = /* @__PURE__ */ new Set();
-  const ingest = await readJson(import_node_path6.default.join(vault, "raw", "codex", "ingest-state.json"), {});
+  const ingest = await readJson(import_node_path7.default.join(vault, "raw", "codex", "ingest-state.json"), {});
   for (const id of Array.isArray(ingest.processed_event_ids) ? ingest.processed_event_ids : []) processed.add(String(id));
-  const directory = import_node_path6.default.join(vault, "raw", "feishu", "events");
+  const directory = import_node_path7.default.join(vault, "raw", "feishu", "events");
   let names = [];
   try {
-    names = (await (0, import_promises4.readdir)(directory)).filter((name) => name.endsWith(".jsonl")).sort().slice(-45);
+    names = (await (0, import_promises5.readdir)(directory)).filter((name) => name.endsWith(".jsonl")).sort().slice(-45);
   } catch {
     return 0;
   }
   let pending = 0;
   for (const name of names) {
-    const lines = (await (0, import_promises4.readFile)(import_node_path6.default.join(directory, name), "utf8")).split(/\r?\n/);
+    const lines = (await (0, import_promises5.readFile)(import_node_path7.default.join(directory, name), "utf8")).split(/\r?\n/);
     for (const line of lines) {
       try {
         const item = JSON.parse(line);
@@ -7923,23 +8027,10 @@ function safeCommandError(error) {
 function larkCliEnv() {
   return { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" };
 }
-async function executeLarkCli(args, options) {
-  let executable = "lark-cli";
-  if (process.platform === "win32") {
-    const located = await execFileAsync2("where.exe", ["lark-cli.cmd"], { timeout: 5e3, windowsHide: true }).then((result2) => String(result2.stdout).split(/\r?\n/).map((value) => value.trim()).filter(Boolean));
-    executable = "";
-    for (const shim of located) {
-      const candidate = import_node_path6.default.join(import_node_path6.default.dirname(shim), "node_modules", "@larksuite", "cli", "bin", "lark-cli.exe");
-      try {
-        await (0, import_promises4.access)(candidate);
-        executable = candidate;
-        break;
-      } catch {
-      }
-    }
-    if (!executable) throw new Error("\u672A\u627E\u5230\u5B98\u65B9 lark-cli \u53EF\u6267\u884C\u6587\u4EF6\uFF0C\u8BF7\u91CD\u65B0\u5B89\u88C5\u6700\u65B0\u7248 @larksuite/cli");
-  }
-  const result = await execFileAsync2(executable, args, options);
+async function executeLarkCli(args, options, located) {
+  const executable = located || (await discoverExecutable("lark-cli"))?.path;
+  if (!executable) throw new Error("\u672A\u627E\u5230\u5B98\u65B9 lark-cli\uFF0C\u8BF7\u91CD\u65B0\u5B89\u88C5\u6700\u65B0\u7248 @larksuite/cli");
+  const result = await execFileAsync3(executable, args, options);
   return { stdout: String(result.stdout || ""), stderr: String(result.stderr || "") };
 }
 

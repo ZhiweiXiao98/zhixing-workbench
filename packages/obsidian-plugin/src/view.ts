@@ -381,6 +381,8 @@ export class ActivityLedgerView extends ItemView {
     const updateLabel = health.update === "available" ? `可更新 ${health.latestVersion}` : health.update === "current" ? "已是最新版" : "检查更新";
     const copy = this.iconButton(panel, "key-round", "复制浏览器接收密钥", "copy-receiver-token");
     copy.addEventListener("click", () => void this.suite.copyReceiverToken());
+    const extension = this.iconButton(panel, "folder-open", "打开浏览器扩展目录", "open-browser-extension-folder");
+    extension.addEventListener("click", () => void this.suite.openBrowserExtensionFolder());
     const run = this.iconButton(panel, health.running ? "loader-circle" : "sparkles", health.running ? "正在整理" : "立即整理", "run-knowledge-now");
     run.disabled = health.runtime !== "ready" || health.codex !== "ready" || health.running;
     run.addEventListener("click", () => void this.suite.runKnowledgeNow());

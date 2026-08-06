@@ -18,3 +18,52 @@ jobs:
       - run: npm ci --prefix packages/obsidian-plugin
       - run: npm audit --prefix packages/obsidian-plugin --audit-level=moderate --registry=https://registry.npmjs.org/
       - run: npm run verify
+
+  package-candidate:
+    name: 生成唯一候选资产
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packages/obsidian-plugin/package-lock.json
+      - run: npm ci --prefix packages/obsidian-plugin
+      - run: npm run build
+      - run: npm run package:release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 3
+
+  platform-lifecycle:
+    name: ${{ matrix.label }} 安装生命周期
+    needs: package-candidate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x64
+          - os: macos-15
+            label: macOS Apple Silicon
+          - os: macos-15-intel
+            label: macOS Intel
+          - os: ubuntu-latest
+            label: Ubuntu x64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-candidate-${{ github.sha }}
+          path: release/
+      - run: node --test tests/installer.test.mjs tests/executable-discovery.test.mjs
+      - run: npm run package:verify

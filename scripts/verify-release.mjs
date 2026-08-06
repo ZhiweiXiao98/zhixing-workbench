@@ -24,6 +24,8 @@ for (const asset of manifest.assets) {
   const listing = (await execFileAsync("tar", ["-tzf", target], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 })).stdout
     .split(/\r?\n/).filter(Boolean).map((name) => name.replace(/\\/g, "/"));
   for (const required of [
+    "zhixing-workbench/安装知行台.cmd",
+    "zhixing-workbench/install-zhixing.sh",
     "zhixing-workbench/scripts/zhixing.mjs",
     "zhixing-workbench/packages/obsidian-plugin/main.js",
     "zhixing-workbench/packages/browser-extension/manifest.json",
