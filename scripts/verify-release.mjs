@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { extractedArchivePaths } from "./release-archive.mjs";
 
-const execFileAsync = promisify(execFile);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const releaseRoot = path.join(root, "release");
 const manifest = JSON.parse(await readFile(path.join(releaseRoot, "update-manifest.json"), "utf8"));
@@ -21,8 +19,7 @@ for (const asset of manifest.assets) {
   if (!(await stat(target)).isFile()) throw new Error(`资产不存在：${asset.file}`);
   const actual = createHash("sha256").update(await readFile(target)).digest("hex");
   if (actual !== asset.sha256) throw new Error(`资产校验不一致：${asset.file}`);
-  const listing = (await execFileAsync("tar", ["-tzf", target], { timeout: 120_000, maxBuffer: 8 * 1024 * 1024 })).stdout
-    .split(/\r?\n/).filter(Boolean).map((name) => name.replace(/\\/g, "/"));
+  const listing = await extractedArchivePaths(target);
   for (const required of [
     "zhixing-workbench/安装知行台.cmd",
     "zhixing-workbench/install-zhixing.sh",
