@@ -17,7 +17,7 @@ const LEGACY_TASK_NAMES = [
   "Codex - Obsidian Daily Ingest"
 ];
 
-export const VERSION = "0.6.1";
+export const VERSION = "0.6.2";
 export const OWNED_SKILLS = ["obsidian-knowledge", "investigate-work-history", "zhixing-manager"];
 
 export async function installSuite(options = {}) {
@@ -168,6 +168,7 @@ export async function uninstallSuite(options = {}) {
   const skillResult = await uninstallSkills(codexHome, install.skills || []);
   const legacy = await restoreLegacyInstallation({
     vault,
+    codexHome,
     state: install.legacy_migration,
     taskManager: options.legacyTaskManager || createLegacyTaskManager(process.platform)
   });
@@ -178,6 +179,7 @@ export async function uninstallSuite(options = {}) {
     ok: true,
     status: "uninstalled",
     skill_conflicts: skillResult.conflicts,
+    legacy_hook_conflicts: legacy.hook_conflicts,
     legacy_restored: legacy.restored,
     data_preserved: ["raw", "wiki", "成果", "AGENTS.md", ".zhixing/feishu-connector.json", "device.json"]
   };
@@ -399,53 +401,67 @@ async function uninstallSkills(codexHome, ownership) {
 }
 
 async function migrateLegacyInstallation({ vault, root, codexHome, previousInstall, taskManager }) {
-  if (previousInstall?.legacy_migration?.migrated) {
-    return { state: previousInstall.legacy_migration, rollback: async () => {} };
-  }
+  const previousState = previousInstall?.legacy_migration?.migrated ? previousInstall.legacy_migration : null;
   const legacyTarget = path.join(vault, ".obsidian", "plugins", LEGACY_PLUGIN_ID);
   const manifest = await readJson(path.join(legacyTarget, "manifest.json"), null);
-  if (manifest?.id !== LEGACY_PLUGIN_ID) return { state: previousInstall?.legacy_migration || null, rollback: async () => {} };
+  if (!previousState && manifest?.id !== LEGACY_PLUGIN_ID) {
+    return { state: previousInstall?.legacy_migration || null, rollback: async () => {} };
+  }
 
-  const backup = path.join(root, "backups", "legacy", `${Date.now()}-${randomUUID()}`, LEGACY_PLUGIN_ID);
+  const backup = previousState?.plugin_backup || path.join(root, "backups", "legacy", `${Date.now()}-${randomUUID()}`, LEGACY_PLUGIN_ID);
   const communityPath = path.join(vault, ".obsidian", "community-plugins.json");
   const communityBefore = await readJson(communityPath, null);
-  let tasks = [];
+  const hooksChange = await migrateLegacyHooks(codexHome, previousState?.legacy_hooks);
+  let observedTasks = [];
+  let pluginMoved = false;
   try {
-    await mkdir(path.dirname(backup), { recursive: true });
-    await cp(legacyTarget, backup, { recursive: true });
-    await rm(legacyTarget, { recursive: true, force: true });
+    if (manifest?.id === LEGACY_PLUGIN_ID) {
+      await mkdir(path.dirname(backup), { recursive: true });
+      if (!await exists(backup)) await cp(legacyTarget, backup, { recursive: true });
+      await rm(legacyTarget, { recursive: true, force: true });
+      pluginMoved = true;
+    }
     if (Array.isArray(communityBefore)) await atomicJson(communityPath, replacePluginId(communityBefore, LEGACY_PLUGIN_ID, PLUGIN_ID));
-    tasks = await taskManager.disable(LEGACY_TASK_NAMES);
+    observedTasks = await taskManager.disable(LEGACY_TASK_NAMES);
+    const tasks = mergeLegacyTaskStates(previousState?.legacy_tasks, observedTasks);
     const receiverConfig = path.join(codexHome, "hooks", "chatgpt-web-receiver.json");
     const state = {
+      ...(previousState || {}),
       migrated: true,
-      migrated_at: new Date().toISOString(),
-      plugin_version: String(manifest.version || "unknown"),
+      migrated_at: previousState?.migrated_at || new Date().toISOString(),
+      plugin_version: previousState?.plugin_version || String(manifest?.version || "unknown"),
       plugin_backup: backup,
-      legacy_was_enabled: Array.isArray(communityBefore) && communityBefore.includes(LEGACY_PLUGIN_ID),
+      legacy_was_enabled: previousState?.legacy_was_enabled ?? (Array.isArray(communityBefore) && communityBefore.includes(LEGACY_PLUGIN_ID)),
       legacy_tasks: tasks,
-      receiver_config_path: await exists(receiverConfig) ? receiverConfig : null
+      legacy_hooks: hooksChange.state,
+      receiver_config_path: previousState?.receiver_config_path || (await exists(receiverConfig) ? receiverConfig : null)
     };
     return {
       state,
       async rollback() {
-        await rm(legacyTarget, { recursive: true, force: true });
-        if (await exists(backup)) await cp(backup, legacyTarget, { recursive: true });
+        if (pluginMoved) {
+          await rm(legacyTarget, { recursive: true, force: true });
+          if (await exists(backup)) await cp(backup, legacyTarget, { recursive: true });
+        }
         if (Array.isArray(communityBefore)) await atomicJson(communityPath, communityBefore);
-        await taskManager.restore(tasks);
+        await taskManager.restore(observedTasks);
+        await hooksChange.rollback();
       }
     };
   } catch (error) {
-    await rm(legacyTarget, { recursive: true, force: true });
-    if (await exists(backup)) await cp(backup, legacyTarget, { recursive: true });
+    if (pluginMoved) {
+      await rm(legacyTarget, { recursive: true, force: true });
+      if (await exists(backup)) await cp(backup, legacyTarget, { recursive: true });
+    }
     if (Array.isArray(communityBefore)) await atomicJson(communityPath, communityBefore);
-    await taskManager.restore(tasks).catch(() => undefined);
+    await taskManager.restore(observedTasks).catch(() => undefined);
+    await hooksChange.rollback().catch(() => undefined);
     throw error;
   }
 }
 
-async function restoreLegacyInstallation({ vault, state, taskManager }) {
-  if (!state?.migrated) return { restored: false };
+async function restoreLegacyInstallation({ vault, codexHome, state, taskManager }) {
+  if (!state?.migrated) return { restored: false, hook_conflicts: [] };
   const target = path.join(vault, ".obsidian", "plugins", LEGACY_PLUGIN_ID);
   let restored = false;
   if (!await exists(target) && state.plugin_backup && await exists(state.plugin_backup)) {
@@ -460,7 +476,8 @@ async function restoreLegacyInstallation({ vault, state, taskManager }) {
     await atomicJson(communityPath, withoutNew);
   }
   await taskManager.restore(Array.isArray(state.legacy_tasks) ? state.legacy_tasks : []);
-  return { restored };
+  const hooks = await restoreLegacyHooks(codexHome, state.legacy_hooks);
+  return { restored, hook_conflicts: hooks.conflicts };
 }
 
 function createLegacyTaskManager(platform) {
@@ -472,7 +489,7 @@ function createLegacyTaskManager(platform) {
         const xml = await execFileAsync("schtasks.exe", ["/Query", "/TN", name, "/XML"], { timeout: 10_000, windowsHide: true })
           .then((value) => String(value.stdout || "")).catch(() => "");
         if (!xml) continue;
-        const wasEnabled = /<Enabled>\s*true\s*<\/Enabled>/i.test(xml);
+        const wasEnabled = legacyTaskWasEnabledFromXml(xml);
         await execFileAsync("schtasks.exe", ["/End", "/TN", name], { timeout: 10_000, windowsHide: true }).catch(() => undefined);
         if (wasEnabled) await execFileAsync("schtasks.exe", ["/Change", "/TN", name, "/DISABLE"], { timeout: 10_000, windowsHide: true });
         result.push({ name, was_enabled: wasEnabled });
@@ -487,6 +504,124 @@ function createLegacyTaskManager(platform) {
       }
     }
   };
+}
+
+export function legacyTaskWasEnabledFromXml(xml) {
+  return !/<Enabled>\s*false\s*<\/Enabled>/i.test(String(xml || ""));
+}
+
+function mergeLegacyTaskStates(previous, observed) {
+  const merged = new Map();
+  for (const state of Array.isArray(previous) ? previous : []) {
+    if (LEGACY_TASK_NAMES.includes(state?.name)) merged.set(state.name, { name: state.name, was_enabled: Boolean(state.was_enabled) });
+  }
+  for (const state of Array.isArray(observed) ? observed : []) {
+    if (!LEGACY_TASK_NAMES.includes(state?.name)) continue;
+    const before = merged.get(state.name);
+    merged.set(state.name, { name: state.name, was_enabled: Boolean(before?.was_enabled || state.was_enabled) });
+  }
+  return [...merged.values()];
+}
+
+async function migrateLegacyHooks(codexHome, previousState) {
+  const target = path.join(codexHome, "hooks.json");
+  const original = await readJson(target, {});
+  const extracted = removeLegacyHooks(original, codexHome);
+  const previousEntries = Array.isArray(previousState?.entries) ? previousState.entries : [];
+  const entries = uniqueLegacyHookBackups([...previousEntries, ...extracted.backups]);
+  if (extracted.changed) await atomicJson(target, extracted.config);
+  return {
+    state: entries.length > 0 ? { schema_version: 1, entries } : previousState || null,
+    async rollback() {
+      if (extracted.changed) await atomicJson(target, original);
+    }
+  };
+}
+
+async function restoreLegacyHooks(codexHome, state) {
+  const backups = Array.isArray(state?.entries) ? state.entries : [];
+  if (backups.length === 0) return { conflicts: [] };
+  const target = path.join(codexHome, "hooks.json");
+  const current = await readJson(target, {});
+  const result = structuredClone(current && typeof current === "object" ? current : {});
+  result.hooks = result.hooks && typeof result.hooks === "object" ? result.hooks : {};
+  const conflicts = [];
+  let changed = false;
+  for (const backup of backups) {
+    const eventName = String(backup?.event_name || "");
+    if (!eventName || !["UserPromptSubmit", "Stop"].includes(eventName) || !backup?.entry) continue;
+    const entries = Array.isArray(result.hooks[eventName]) ? result.hooks[eventName] : [];
+    const existing = entries.map((entry) => legacyOnlyEntry(entry, codexHome)).filter(Boolean);
+    if (existing.length > 0) {
+      if (!existing.some((entry) => JSON.stringify(entry) === JSON.stringify(backup.entry))) conflicts.push(eventName);
+      continue;
+    }
+    result.hooks[eventName] = [...entries, structuredClone(backup.entry)];
+    changed = true;
+  }
+  if (changed) await atomicJson(target, result);
+  return { conflicts: [...new Set(conflicts)] };
+}
+
+function removeLegacyHooks(config, codexHome) {
+  const result = structuredClone(config && typeof config === "object" ? config : {});
+  if (!result.hooks || typeof result.hooks !== "object") return { config: result, backups: [], changed: false };
+  const backups = [];
+  let changed = false;
+  for (const eventName of ["UserPromptSubmit", "Stop"]) {
+    const entries = Array.isArray(result.hooks[eventName]) ? result.hooks[eventName] : [];
+    const kept = [];
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object" || !Array.isArray(entry.hooks)) {
+        kept.push(entry);
+        continue;
+      }
+      const legacy = entry.hooks.filter((hook) => isLegacyObsidianHook(hook, codexHome));
+      if (legacy.length === 0) {
+        kept.push(entry);
+        continue;
+      }
+      changed = true;
+      backups.push({ event_name: eventName, entry: { ...entry, hooks: legacy } });
+      const remaining = entry.hooks.filter((hook) => !isLegacyObsidianHook(hook, codexHome));
+      if (remaining.length > 0) kept.push({ ...entry, hooks: remaining });
+    }
+    result.hooks[eventName] = kept;
+  }
+  return { config: result, backups, changed };
+}
+
+function legacyOnlyEntry(entry, codexHome) {
+  if (!entry || typeof entry !== "object" || !Array.isArray(entry.hooks)) return null;
+  const legacy = entry.hooks.filter((hook) => isLegacyObsidianHook(hook, codexHome));
+  return legacy.length > 0 ? { ...entry, hooks: legacy } : null;
+}
+
+function uniqueLegacyHookBackups(backups) {
+  const seen = new Set();
+  const result = [];
+  for (const backup of backups) {
+    const key = JSON.stringify(backup);
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push(backup);
+    }
+  }
+  return result;
+}
+
+export function isLegacyObsidianHook(hook, codexHome) {
+  const command = typeof hook?.command === "string" ? hook.command.trim() : "";
+  if (!/(?:^|[\\/\s"])(?:powershell|pwsh)(?:\.exe)?(?:"|\s)/i.test(command)) return false;
+  const file = command.match(/(?:^|\s)-(?:File|f)\s+(?:"([^"]+)"|'([^']+)'|([^\s]+))/i);
+  if (!file) return false;
+  const actual = normalizeHookPath(file[1] || file[2] || file[3]);
+  const expected = normalizeHookPath(path.join(codexHome, "hooks", "obsidian-capture.ps1"));
+  return actual === expected;
+}
+
+function normalizeHookPath(value) {
+  return String(value || "").trim().replace(/^['"]|['"]$/g, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/").toLocaleLowerCase();
 }
 
 async function replaceManagedDirectory(source, target) {

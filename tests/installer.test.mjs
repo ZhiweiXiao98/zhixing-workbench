@@ -6,7 +6,9 @@ import test from "node:test";
 import {
   countOwnedHooks,
   diagnoseSuite,
+  isLegacyObsidianHook,
   installSuite,
+  legacyTaskWasEnabledFromXml,
   mergeOwnedHooks,
   removeOwnedHooks,
   uninstallSuite
@@ -39,6 +41,15 @@ test("Hook 合并保留其他自动化并且自身保持单份", () => {
   const removed = removeOwnedHooks(twice);
   assert.equal(countOwnedHooks(removed), 0);
   assert.match(JSON.stringify(removed), /other-tool|notify-tool/);
+});
+
+test("旧计划任务 XML 只有显式 false 才视为禁用", () => {
+  const missing = `<?xml version="1.0"?><Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Settings><StartWhenAvailable>true</StartWhenAvailable></Settings></Task>`;
+  const enabled = `<Task><Settings><Enabled>true</Enabled></Settings></Task>`;
+  const disabled = `<Task><Settings><Enabled>false</Enabled></Settings></Task>`;
+  assert.equal(legacyTaskWasEnabledFromXml(missing), true);
+  assert.equal(legacyTaskWasEnabledFromXml(enabled), true);
+  assert.equal(legacyTaskWasEnabledFromXml(disabled), false);
 });
 
 test("安装与卸载只处理程序并保留 Vault 个人内容", async () => {
@@ -80,7 +91,7 @@ test("安装与卸载只处理程序并保留 Vault 个人内容", async () => {
     await writeFile(extensionManifest, `${JSON.stringify(staleManifest, null, 2)}\n`, "utf8");
     await installSuite(options);
     assert.equal(await readFile(path.join(config, "device.json"), "utf8"), deviceBefore);
-    assert.equal(JSON.parse(await readFile(extensionManifest, "utf8")).version, "0.6.1");
+    assert.equal(JSON.parse(await readFile(extensionManifest, "utf8")).version, "0.6.2");
     const installedMain = path.join(vault, ".obsidian", "plugins", "zhixing-workbench", "main.js");
     await writeFile(installedMain, "stable-before-update\n", "utf8");
     await writeFile(path.join(installed.browser_extension, "service-worker.js"), "stable-extension-before-update\n", "utf8");
@@ -97,6 +108,7 @@ test("安装与卸载只处理程序并保留 Vault 个人内容", async () => {
       configOptions: options.configOptions
     });
     assert.equal(removed.status, "uninstalled");
+    assert.deepEqual(removed.legacy_hook_conflicts, []);
     assert.equal(await readFile(personal, "utf8"), "这是一份不会被程序覆盖的个人内容。\n");
     assert.match(await readFile(feishuConfig, "utf8"), /"enabled":true/);
     assert.ok(await readFile(path.join(config, "device.json"), "utf8"));
@@ -170,7 +182,7 @@ test("v0.6.0 未修改 Skill 与旧程序副本一致时可安全认领升级", 
     for (const skill of SKILLS) {
       const marker = JSON.parse(await readFile(path.join(fixture.codexHome, "skills", skill, ".zhixing-owner.json"), "utf8"));
       assert.equal(marker.owner, "zhixing-workbench");
-      assert.equal(marker.installed_version, "0.6.1");
+      assert.equal(marker.installed_version, "0.6.2");
     }
   } finally {
     await fixture.cleanup();
@@ -227,6 +239,184 @@ test("旧版 0.5.0 插件、接收密钥与任务状态可迁移并在卸载时�
   }
 });
 
+test("混合 Hook 安装去重、重复安装幂等并在卸载时精确恢复旧知行台 Hook", async () => {
+  const fixture = await installFixture("legacy-hooks");
+  const taskCalls = [];
+  const taskManager = {
+    async disable() {
+      taskCalls.push("disable");
+      return [{ name: "Codex - ChatGPT Web Capture Receiver", was_enabled: taskCalls.length === 1 }];
+    },
+    async restore(states) { taskCalls.push(["restore", states]); }
+  };
+  try {
+    await prepareLegacyPlugin(fixture);
+    const hooksPath = path.join(fixture.codexHome, "hooks.json");
+    const legacyCommand = legacyHookCommand(fixture.codexHome);
+    const unrelatedSameName = legacyHookCommand(path.join(fixture.root, "unrelated-codex-home"));
+    await writeFile(hooksPath, `${JSON.stringify({
+      hooks: {
+        UserPromptSubmit: [{ matcher: "*", hooks: [
+          { type: "command", command: legacyCommand, timeout: 9, statusMessage: "用户调整过的旧采集" },
+          { type: "command", command: "user-prompt-other", timeout: 3 }
+        ] }],
+        Stop: [
+          { hooks: [{ type: "command", command: "powershell.exe -File \"bad-request-continue.ps1\"", timeout: 12 }] },
+          { hooks: [{ type: "command", command: legacyCommand, timeout: 7 }] },
+          { hooks: [{ type: "command", command: unrelatedSameName, timeout: 5 }] },
+          { hooks: [{ type: "command", command: "\"node\" \"C:/old/program/runtime/capture-hook.mjs\"", timeout: 5 }] }
+        ]
+      },
+      custom: { keep: true }
+    }, null, 2)}\n`, "utf8");
+
+    await installSuite({ ...fixture.options, legacyTaskManager: taskManager });
+    const first = JSON.parse(await readFile(hooksPath, "utf8"));
+    assert.equal(countOwnedHooks(first), 2);
+    assert.equal(countLegacyHooks(first, fixture.codexHome), 0);
+    assert.match(JSON.stringify(first), /bad-request-continue|user-prompt-other|unrelated-codex-home/);
+    const firstState = JSON.parse(await readFile(path.join(fixture.config, "install.json"), "utf8"));
+    assert.equal(firstState.legacy_migration.legacy_hooks.entries.length, 2);
+    assert.equal(firstState.legacy_migration.legacy_tasks[0].was_enabled, true);
+
+    await installSuite({ ...fixture.options, legacyTaskManager: taskManager });
+    const second = JSON.parse(await readFile(hooksPath, "utf8"));
+    const secondState = JSON.parse(await readFile(path.join(fixture.config, "install.json"), "utf8"));
+    assert.equal(countOwnedHooks(second), 2);
+    assert.equal(countLegacyHooks(second, fixture.codexHome), 0);
+    assert.equal(secondState.legacy_migration.legacy_hooks.entries.length, 2);
+    assert.equal(secondState.legacy_migration.legacy_tasks[0].was_enabled, true);
+    assert.equal(taskCalls.filter((value) => value === "disable").length, 2);
+
+    const stopUserHook = second.hooks.Stop.find((entry) => JSON.stringify(entry).includes("bad-request-continue"));
+    stopUserHook.hooks[0].timeout = 33;
+    await writeFile(hooksPath, `${JSON.stringify(second, null, 2)}\n`, "utf8");
+    const removed = await uninstallSuite({ ...fixture.options, legacyTaskManager: taskManager });
+    const restored = JSON.parse(await readFile(hooksPath, "utf8"));
+    assert.deepEqual(removed.legacy_hook_conflicts, []);
+    assert.equal(countOwnedHooks(restored), 0);
+    assert.equal(countLegacyHooks(restored, fixture.codexHome), 2);
+    assert.match(JSON.stringify(restored), /bad-request-continue/);
+    assert.equal(restored.hooks.Stop.find((entry) => JSON.stringify(entry).includes("bad-request-continue")).hooks[0].timeout, 33);
+    assert.equal(restored.hooks.UserPromptSubmit.find((entry) => countLegacyHooks({ hooks: { UserPromptSubmit: [entry] } }, fixture.codexHome)).hooks[0].timeout, 9);
+    const restoreCall = taskCalls.find((value) => Array.isArray(value));
+    assert.equal(restoreCall[1][0].was_enabled, true);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("卸载不覆盖用户重新加入并修改过的旧知行台 Hook", async () => {
+  const fixture = await installFixture("legacy-hook-conflict");
+  const taskManager = { disable: async () => [], restore: async () => {} };
+  try {
+    await prepareLegacyPlugin(fixture);
+    const hooksPath = path.join(fixture.codexHome, "hooks.json");
+    const command = legacyHookCommand(fixture.codexHome);
+    await writeFile(hooksPath, `${JSON.stringify({ hooks: {
+      UserPromptSubmit: [{ hooks: [{ type: "command", command, timeout: 5 }] }],
+      Stop: [{ hooks: [{ type: "command", command, timeout: 5 }] }]
+    } }, null, 2)}\n`, "utf8");
+    await installSuite({ ...fixture.options, legacyTaskManager: taskManager });
+    const current = JSON.parse(await readFile(hooksPath, "utf8"));
+    current.hooks.Stop.push({ hooks: [{ type: "command", command, timeout: 99, statusMessage: "用户重新加入" }] });
+    await writeFile(hooksPath, `${JSON.stringify(current, null, 2)}\n`, "utf8");
+
+    const removed = await uninstallSuite({ ...fixture.options, legacyTaskManager: taskManager });
+    const restored = JSON.parse(await readFile(hooksPath, "utf8"));
+    assert.deepEqual(removed.legacy_hook_conflicts, ["Stop"]);
+    const stopLegacy = restored.hooks.Stop.flatMap((entry) => entry.hooks || []).filter((hook) => isLegacyObsidianHook(hook, fixture.codexHome));
+    assert.equal(stopLegacy.length, 1);
+    assert.equal(stopLegacy[0].timeout, 99);
+    assert.equal(countLegacyHooks(restored, fixture.codexHome), 2);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("再次安装可修复 0.6.1 已迁移但任务状态和旧 Hook 留错的安装", async () => {
+  const fixture = await installFixture("repair-v061-migration");
+  const command = legacyHookCommand(fixture.codexHome);
+  const taskNames = [
+    "Codex - ChatGPT Web Capture Receiver",
+    "Codex - ChatGPT Web Capture Watchdog",
+    "Codex - Obsidian Daily Ingest"
+  ];
+  const disableCalls = [];
+  let tasksEnabled = true;
+  const taskManager = {
+    async disable(names) {
+      disableCalls.push([...names]);
+      const xml = tasksEnabled
+        ? `<Task><Settings><StartWhenAvailable>true</StartWhenAvailable></Settings></Task>`
+        : `<Task><Settings><Enabled>false</Enabled></Settings></Task>`;
+      const states = names.map((name) => ({ name, was_enabled: legacyTaskWasEnabledFromXml(xml) }));
+      tasksEnabled = false;
+      return states;
+    },
+    async restore() {}
+  };
+  try {
+    await mkdir(fixture.config, { recursive: true });
+    await writeFile(path.join(fixture.config, "install.json"), `${JSON.stringify({
+      schema_version: 2,
+      version: "0.6.1",
+      vault_root: fixture.vault,
+      program_root: path.join(fixture.config, "programs", "0.6.1"),
+      legacy_migration: {
+        migrated: true,
+        migrated_at: "2026-08-06T00:00:00.000Z",
+        plugin_version: "0.5.0",
+        plugin_backup: path.join(fixture.config, "backups", "legacy", "activity-ledger-view"),
+        legacy_was_enabled: true,
+        legacy_tasks: [
+          { name: "Codex - ChatGPT Web Capture Receiver", was_enabled: false },
+          { name: "Codex - ChatGPT Web Capture Watchdog", was_enabled: false },
+          { name: "Codex - Obsidian Daily Ingest", was_enabled: false }
+        ]
+      }
+    }, null, 2)}\n`, "utf8");
+    await writeFile(path.join(fixture.vault, ".obsidian", "community-plugins.json"), JSON.stringify(["zhixing-workbench"]), "utf8");
+    await writeFile(path.join(fixture.codexHome, "hooks.json"), `${JSON.stringify({ hooks: {
+      UserPromptSubmit: [
+        { hooks: [{ type: "command", command, timeout: 5 }] },
+        { hooks: [{ type: "command", command: "\"node\" \"C:/old/program/runtime/capture-hook.mjs\"", timeout: 5 }] }
+      ],
+      Stop: [
+        { hooks: [{ type: "command", command: "powershell.exe -File \"bad-request-continue.ps1\"", timeout: 5 }] },
+        { hooks: [{ type: "command", command, timeout: 5 }] },
+        { hooks: [{ type: "command", command: "\"node\" \"C:/old/program/runtime/capture-hook.mjs\"", timeout: 5 }] }
+      ]
+    } }, null, 2)}\n`, "utf8");
+
+    assert.equal(await pathExists(path.join(fixture.vault, ".obsidian", "plugins", "activity-ledger-view")), false);
+    await installSuite({ ...fixture.options, legacyTaskManager: taskManager });
+    const repairedHooks = JSON.parse(await readFile(path.join(fixture.codexHome, "hooks.json"), "utf8"));
+    const repairedState = JSON.parse(await readFile(path.join(fixture.config, "install.json"), "utf8"));
+    assert.equal(tasksEnabled, false);
+    assert.deepEqual(disableCalls, [taskNames]);
+    assert.equal(countLegacyHooks(repairedHooks, fixture.codexHome), 0);
+    assert.equal(countOwnedHooks(repairedHooks), 2);
+    assert.match(JSON.stringify(repairedHooks), /bad-request-continue/);
+    assert.equal(repairedState.version, "0.6.2");
+    assert.equal(repairedState.legacy_migration.legacy_hooks.entries.length, 2);
+    assert.deepEqual(repairedState.legacy_migration.legacy_tasks.map((item) => item.was_enabled), [true, true, true]);
+
+    await installSuite({ ...fixture.options, legacyTaskManager: taskManager });
+    const repeatedHooks = JSON.parse(await readFile(path.join(fixture.codexHome, "hooks.json"), "utf8"));
+    const repeatedState = JSON.parse(await readFile(path.join(fixture.config, "install.json"), "utf8"));
+    assert.deepEqual(disableCalls, [taskNames, taskNames]);
+    assert.deepEqual(repeatedHooks, repairedHooks);
+    assert.equal(countLegacyHooks(repeatedHooks, fixture.codexHome), 0);
+    assert.equal(countOwnedHooks(repeatedHooks), 2);
+    assert.match(JSON.stringify(repeatedHooks), /bad-request-continue/);
+    assert.equal(repeatedState.legacy_migration.legacy_hooks.entries.length, 2);
+    assert.deepEqual(repeatedState.legacy_migration.legacy_tasks.map((item) => item.was_enabled), [true, true, true]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 async function installFixture(label) {
   const root = await mkdtemp(path.join(tmpdir(), `zhixing-${label}-`));
   const vault = path.join(root, "vault");
@@ -259,6 +449,26 @@ async function prepareV060SkillInstall(fixture) {
     vault_root: fixture.vault,
     program_root: oldProgram
   }, null, 2)}\n`, "utf8");
+}
+
+async function prepareLegacyPlugin(fixture) {
+  const legacy = path.join(fixture.vault, ".obsidian", "plugins", "activity-ledger-view");
+  await mkdir(legacy, { recursive: true });
+  await writeFile(path.join(legacy, "manifest.json"), JSON.stringify({ id: "activity-ledger-view", name: "知行台", version: "0.5.0" }), "utf8");
+  await writeFile(path.join(fixture.vault, ".obsidian", "community-plugins.json"), JSON.stringify(["activity-ledger-view"]), "utf8");
+}
+
+function legacyHookCommand(codexHome) {
+  return `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${path.join(codexHome, "hooks", "obsidian-capture.ps1")}"`;
+}
+
+function countLegacyHooks(config, codexHome) {
+  let count = 0;
+  for (const entries of Object.values(config?.hooks || {})) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) for (const hook of entry?.hooks || []) if (isLegacyObsidianHook(hook, codexHome)) count += 1;
+  }
+  return count;
 }
 
 async function pathExists(target) {
