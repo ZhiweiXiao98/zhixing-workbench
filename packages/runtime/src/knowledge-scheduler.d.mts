@@ -24,7 +24,8 @@ export function runDueKnowledgeCycle(options: {
 export function evaluateSchedule(options: {
   now?: Date | string | number;
   state?: Partial<KnowledgeScheduleState>;
-  lastCycle?: { finished_at?: string } | null;
+  lastCycle?: { status?: string; finished_at?: string; error?: string;
+    batches?: Array<{ status?: string }> } | null;
   queue?: { ready_topics?: number; candidate_topics?: number } | null;
   newActivity?: boolean;
   executorReady?: boolean;
