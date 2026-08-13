@@ -24,6 +24,10 @@ import {
   type FeishuBaseTable,
   type FeishuBaseView
 } from "./feishu-base-picker";
+import {
+  parseChatCandidatesPayload,
+  type FeishuChatCandidate
+} from "./feishu-chat-picker";
 
 const execFileAsync = promisify(execFile);
 const RECEIVER_PORT = 43123;
@@ -364,6 +368,27 @@ export class SuiteService {
     await this.app.vault.adapter.write(".zhixing/feishu-connector.json", `${JSON.stringify(config, null, 2)}\n`);
     await this.refreshHealth();
     return config;
+  }
+
+  async findFeishuChats(value: string): Promise<FeishuChatCandidate[]> {
+    const query = value.trim();
+    if (!query) throw new Error("请输入项目群名称");
+    const result = await executeLarkCli([
+      "im", "+chat-search", "--as", "user", "--query", query.slice(0, 64),
+      "--search-types", "private,public_joined,external", "--page-size", "20", "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const candidates = parseChatCandidatesPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    if (candidates.length === 0) throw new Error("没有找到匹配的项目群，请换一个更准确的名称");
+    return candidates;
+  }
+
+  async listRecentFeishuChats(): Promise<FeishuChatCandidate[]> {
+    const result = await executeLarkCli([
+      "im", "+chat-list", "--as", "user", "--sort", "active_time", "--page-size", "20", "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const candidates = parseChatCandidatesPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    if (candidates.length === 0) throw new Error("没有找到最近使用的项目群，可以输入群名继续查找");
+    return candidates;
   }
 
   async findFeishuBases(value: string): Promise<FeishuBaseLookup> {

@@ -7,6 +7,10 @@ import {
   type FeishuBaseTable,
   type FeishuBaseView
 } from "./feishu-base-picker";
+import {
+  createChatSelection,
+  type FeishuChatCandidate
+} from "./feishu-chat-picker";
 
 const MODULES = [
   ["tasks", "我的任务", "分配给我的任务及状态变化"],
@@ -24,7 +28,9 @@ export class FeishuSetupModal extends Modal {
   private config?: FeishuConnectorConfig;
   private authorizationStarted = false;
   private busy = false;
-  private chatText = "";
+  private chatQuery = "";
+  private chatCandidates: FeishuChatCandidate[] = [];
+  private chatLookupMessage = "";
   private baseQuery = "";
   private baseCandidates: FeishuBaseCandidate[] = [];
   private baseTables: FeishuBaseTable[] = [];
@@ -49,7 +55,6 @@ export class FeishuSetupModal extends Modal {
 
   private async load(): Promise<void> {
     this.config = await this.suite.getFeishuConfig();
-    this.chatText = this.config.selected_chats.map((item) => `${item.label} | ${item.chat_id || item.query || ""}`).join("\n");
     this.render();
   }
 
@@ -113,10 +118,24 @@ export class FeishuSetupModal extends Modal {
     if (this.config?.modules.messages) {
       const group = parent.createDiv({ cls: "zhixing-feishu-selection" });
       group.createEl("h3", { text: "项目群" });
-      group.createDiv({ text: "每行一个：显示名称 | 飞书群名、群链接或 oc_ 开头的群 ID" });
-      const input = group.createEl("textarea", { attr: { rows: "4", placeholder: "发布项目群 | oc_fictional" } });
-      input.value = this.chatText;
-      input.addEventListener("input", () => { this.chatText = input.value; });
+      group.createDiv({ text: "输入群名查找，或从最近使用的项目群中直接选择。" });
+      this.renderSelectedChats(group);
+      const lookup = group.createDiv({ cls: "zhixing-feishu-chat-lookup" });
+      const input = lookup.createEl("input", { type: "text", placeholder: "例如：AI研发小组" });
+      input.value = this.chatQuery;
+      input.disabled = this.busy;
+      input.addEventListener("input", () => { this.chatQuery = input.value; });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") { event.preventDefault(); void this.lookupChat(); }
+      });
+      const search = lookup.createEl("button", { text: this.busy ? "正在查找" : "查找" });
+      search.disabled = this.busy;
+      search.addEventListener("click", () => void this.lookupChat());
+      const recent = lookup.createEl("button", { text: "最近使用" });
+      recent.disabled = this.busy;
+      recent.addEventListener("click", () => void this.browseRecentChats());
+      this.renderChatCandidates(group);
+      if (this.chatLookupMessage) group.createDiv({ cls: "zhixing-feishu-chat-message", text: this.chatLookupMessage });
     }
     if (this.config?.modules.base) {
       const base = parent.createDiv({ cls: "zhixing-feishu-selection" });
@@ -176,7 +195,7 @@ export class FeishuSetupModal extends Modal {
     const health = this.suite.snapshot().feishu;
     const summary = parent.createDiv({ cls: "zhixing-feishu-confirm" });
     metric(summary, "模块", String(Object.values(this.config?.modules || {}).filter(Boolean).length));
-    metric(summary, "项目群", String(parseChats(this.chatText).length));
+    metric(summary, "项目群", String(this.config?.selected_chats.length || 0));
     metric(summary, "Base 视图", String(this.config?.selected_bases.length || 0));
     metric(summary, "同步间隔", `${this.config?.sync_interval_minutes || 60} 分钟`);
     new Setting(parent).setName("开启飞书只读同步").setDesc("错过同步后会在 Obsidian 下次启动时补跑")
@@ -209,7 +228,6 @@ export class FeishuSetupModal extends Modal {
       return;
     }
     if (this.step === 2) {
-      this.config.selected_chats = parseChats(this.chatText);
       if (this.config.modules.messages && this.config.selected_chats.length === 0) {
         new Notice("已开启项目群消息，请至少选择一个项目群");
         return;
@@ -251,6 +269,87 @@ export class FeishuSetupModal extends Modal {
       this.busy = false;
       this.render();
     }
+  }
+
+  private renderSelectedChats(parent: HTMLElement): void {
+    if (!this.config?.selected_chats.length) return;
+    const selected = parent.createDiv({ cls: "zhixing-feishu-chat-selected" });
+    for (const item of this.config.selected_chats) {
+      const row = selected.createDiv();
+      setIcon(row.createSpan(), "messages-square");
+      row.createSpan({ text: item.label });
+      const remove = row.createEl("button", { attr: { "aria-label": `移除 ${item.label}` } });
+      setIcon(remove, "x");
+      remove.addEventListener("click", () => {
+        if (!this.config) return;
+        this.config.selected_chats = this.config.selected_chats.filter((value) => value.selection_key !== item.selection_key);
+        this.render();
+      });
+    }
+  }
+
+  private renderChatCandidates(parent: HTMLElement): void {
+    if (this.chatCandidates.length === 0) return;
+    const results = parent.createDiv({ cls: "zhixing-feishu-chat-results" });
+    results.createDiv({ cls: "zhixing-feishu-chat-caption", text: "选择一个项目群" });
+    for (const candidate of this.chatCandidates.slice(0, 12)) {
+      const row = results.createDiv();
+      const copy = row.createDiv();
+      copy.createEl("strong", { text: candidate.name });
+      copy.createSpan({ text: candidate.external ? "外部群" : "内部群" });
+      const choose = row.createEl("button", { text: this.isChatSelected(candidate.chatId) ? "已选择" : "选择" });
+      choose.disabled = this.busy || this.isChatSelected(candidate.chatId);
+      choose.addEventListener("click", () => this.addChat(candidate));
+    }
+  }
+
+  private async lookupChat(): Promise<void> {
+    if (!this.chatQuery.trim()) { new Notice("请输入项目群名称"); return; }
+    this.busy = true;
+    this.chatCandidates = [];
+    this.chatLookupMessage = "正在飞书中查找项目群…";
+    this.render();
+    try {
+      this.chatCandidates = await this.suite.findFeishuChats(this.chatQuery);
+      this.chatLookupMessage = this.chatCandidates.length === 1 ? "找到 1 个项目群，请选择" : `找到 ${this.chatCandidates.length} 个项目群，请选择`;
+    } catch (error) {
+      this.chatLookupMessage = error instanceof Error ? error.message : String(error);
+      new Notice(this.chatLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private async browseRecentChats(): Promise<void> {
+    this.busy = true;
+    this.chatCandidates = [];
+    this.chatLookupMessage = "正在读取最近使用的项目群…";
+    this.render();
+    try {
+      this.chatCandidates = await this.suite.listRecentFeishuChats();
+      this.chatLookupMessage = `找到 ${this.chatCandidates.length} 个最近使用的项目群，请选择`;
+    } catch (error) {
+      this.chatLookupMessage = error instanceof Error ? error.message : String(error);
+      new Notice(this.chatLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private addChat(candidate: FeishuChatCandidate): void {
+    if (!this.config) return;
+    const selection = createChatSelection(candidate);
+    const values = this.config.selected_chats.filter((item) => item.selection_key !== selection.selection_key);
+    this.config.selected_chats = [...values, selection];
+    this.chatQuery = "";
+    this.chatLookupMessage = `已添加：${selection.label}`;
+    this.render();
+  }
+
+  private isChatSelected(chatId: string): boolean {
+    return Boolean(this.config?.selected_chats.some((item) => item.chat_id === chatId));
   }
 
   private renderSelectedBases(parent: HTMLElement): void {
@@ -448,27 +547,6 @@ export class FeishuSetupModal extends Modal {
 
 function stepTitle(step: number): string {
   return ["连接飞书", "选择模块", "选择群聊与 Base", "预览采集范围", "确认开启"][step] || "设置";
-}
-
-function parseChats(value: string): FeishuConnectorConfig["selected_chats"] {
-  const results = [];
-  for (const line of value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
-    const [labelPart, sourcePart] = splitLine(line);
-    const id = (sourcePart.match(/\boc_[A-Za-z0-9_-]+\b/) || labelPart.match(/\boc_[A-Za-z0-9_-]+\b/))?.[0];
-    const query = id ? "" : /^https?:\/\//i.test(sourcePart) ? labelPart.trim() : sourcePart.trim();
-    if (id || query) results.push({ selection_key: id || query, chat_id: id || "", query,
-      label: labelPart === id || labelPart === sourcePart ? (query || "已选项目群") : labelPart, type: "project_group" as const });
-  }
-  return uniqueBy(results, (item) => item.selection_key);
-}
-
-function splitLine(value: string): [string, string] {
-  const parts = value.split(/\s*\|\s*/, 2);
-  return parts.length === 2 ? [parts[0] || "已选范围", parts[1] || ""] : [value, value];
-}
-
-function uniqueBy<T>(values: T[], key: (value: T) => string): T[] {
-  return [...new Map(values.map((value) => [key(value), value])).values()];
 }
 
 function metric(parent: HTMLElement, label: string, value: string): void {
