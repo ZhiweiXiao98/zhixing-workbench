@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -140,6 +140,53 @@ process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { total_tok
     assert.deepEqual(codexArgs.slice(codexArgs.indexOf("--sandbox"), codexArgs.indexOf("--sandbox") + 2), ["--sandbox", "read-only"]);
     const state = JSON.parse(await readFile(path.join(root, "raw", "codex", "ingest-state.json"), "utf8"));
     assert.deepEqual(new Set(state.processed_event_ids), new Set(["prompt-event", "stop-event"]));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("事务以 exit 2 返回部分失败时保留 stdout 回执与可读错误", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-partial-evidence-"));
+  const fakeTransaction = path.join(root, "fake-transaction.mjs");
+  const fakeCodex = path.join(root, "fake-codex.mjs");
+  await writeFile(fakeTransaction, `import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+const args = process.argv.slice(2); const command = args[0];
+const value = (name) => args[args.indexOf(name) + 1];
+const vault = value("--vault"); const runId = value("--run-id");
+if (command === "prepare") {
+  const staging = path.join(vault, "raw", "codex", "staging"); await mkdir(staging, { recursive: true });
+  const contract = { run_id: runId, pair_count: 1, topic_count: 1, system_pair_count: 0,
+    result_path: path.join(staging, runId + ".json"), topics: [{ id: "topic:fictional" }] };
+  await mkdir(path.join(vault, "raw", "codex"), { recursive: true });
+  await writeFile(path.join(vault, "raw", "codex", "ingest-run-contract.json"), JSON.stringify(contract));
+  process.stdout.write(JSON.stringify(contract) + "\\n");
+} else if (command === "commit") {
+  process.stdout.write(JSON.stringify({ committed: 1, failed: 1, final_status: "partial",
+    failures: [{ id: "topic:fictional", title: "虚构接收器排查", error: "原始事件来源与主题证据不一致" }] }) + "\\n");
+  process.exitCode = 2;
+} else { process.stdout.write(JSON.stringify({ ok: true }) + "\\n"); }
+`, "utf8");
+  await writeFile(fakeCodex, `import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+const args = process.argv.slice(2); const output = args[args.indexOf("--output-last-message") + 1];
+const contract = JSON.parse(await readFile(path.join(process.cwd(), "raw", "codex", "ingest-run-contract.json"), "utf8"));
+await writeFile(output, JSON.stringify({ schema_version: 4, run_id: contract.run_id, outcomes: [] }));
+process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { total_tokens: 7 } }) + "\\n");
+`, "utf8");
+  try {
+    const result = await runCycle({ vault: root, batches: 1, transaction: fakeTransaction,
+      codex: process.execPath, codexPrefixArgs: [fakeCodex], skipFeishu: true });
+    assert.equal(result.status, "partial");
+    assert.equal(result.batches[0].status, "partial");
+    assert.match(result.batches[0].error, /虚构接收器排查.*原始事件来源与主题证据不一致/);
+    assert.equal(result.batches[0].failures[0].id, "topic:fictional");
+    const logs = await readdir(path.join(root, "raw", "codex", "automation", new Date().toISOString().slice(0, 10)));
+    const log = await readFile(path.join(root, "raw", "codex", "automation", new Date().toISOString().slice(0, 10), logs[0]), "utf8");
+    assert.match(log, /事务提交/);
+    assert.match(log, /原始事件来源与主题证据不一致/);
+    const persisted = JSON.parse(await readFile(path.join(root, "raw", "codex", "automation", "last-cycle.json"), "utf8"));
+    assert.match(persisted.batches[0].error, /原始事件来源与主题证据不一致/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

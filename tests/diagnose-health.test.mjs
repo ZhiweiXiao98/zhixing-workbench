@@ -10,7 +10,7 @@ test("diagnose 分开报告配置、实际支持、事件时间与错误", async
   const vault = path.join(root, "vault");
   const codexHome = path.join(root, "codex-home");
   const config = path.join(root, "config");
-  const program = path.join(config, "programs", "0.6.3");
+  const program = path.join(config, "programs", "0.6.4");
   const codex = path.join(root, "bin", "codex.exe");
   try {
     await mkdir(path.join(vault, ".obsidian", "plugins", "zhixing-workbench"), { recursive: true });
@@ -20,7 +20,7 @@ test("diagnose 分开报告配置、实际支持、事件时间与错误", async
     await mkdir(config, { recursive: true });
     await writeFile(path.join(program, "runtime", "run-cycle.mjs"), "// fixture\n", "utf8");
     await writeFile(path.join(vault, ".obsidian", "plugins", "zhixing-workbench", "main.js"), "// fixture\n", "utf8");
-    await writeFile(path.join(config, "install.json"), JSON.stringify({ version: "0.6.3", vault_root: vault, program_root: program }), "utf8");
+    await writeFile(path.join(config, "install.json"), JSON.stringify({ version: "0.6.4", vault_root: vault, program_root: program }), "utf8");
     await writeFile(path.join(config, "device.json"), JSON.stringify({ receiver_port: 43123, receiver_token: "fictional-token-long-enough" }), "utf8");
     await writeFile(path.join(codexHome, "hooks.json"), JSON.stringify({ hooks: {
       UserPromptSubmit: [{ hooks: [{ command: `"node" "${path.join(program, "runtime", "capture-hook.mjs")}"` }] }],

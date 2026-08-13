@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { open, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { appendFile, open, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -21,7 +21,7 @@ export async function runCycle(options = {}) {
   if (!configuredVault) throw new Error("尚未配置知行台 Vault");
   const vault = path.resolve(configuredVault);
   const runtimeRoot = path.dirname(fileURLToPath(import.meta.url));
-  const transaction = path.join(runtimeRoot, "knowledge-transaction.mjs");
+  const transaction = path.resolve(options.transaction || path.join(runtimeRoot, "knowledge-transaction.mjs"));
   const prompt = await readFile(path.join(runtimeRoot, "ingest-prompt.md"), "utf8");
   const codex = options.codex || process.env.CODEX_BIN || "codex";
   const cycleId = options.cycleId || randomUUID();
@@ -72,8 +72,10 @@ export async function runCycle(options = {}) {
       if (batch.selected_topics === 0) {
         const committed = await runCommand(process.execPath,
           [transaction, "commit", "--vault", vault, "--run-id", runId, "--system-only"],
-          { cwd: vault, timeoutMs: 120_000 });
-        batch.status = JSON.parse(lastNonemptyLine(committed.stdout)).failed > 0 ? "failed" : "succeeded";
+          { cwd: vault, timeoutMs: 120_000, acceptedExitCodes: [0, 2] });
+        const receipt = JSON.parse(lastNonemptyLine(committed.stdout));
+        await appendLog(logPath, "事务提交", committed.stdout, committed.stderr);
+        applyReceipt(batch, receipt);
         if (batch.selected_pairs === 0 && Number(contract.system_pair_count || 0) === 0) break;
         continue;
       }
@@ -105,13 +107,13 @@ export async function runCycle(options = {}) {
         const committed = await runCommand(process.execPath, [transaction, "commit", "--vault", vault,
           "--run-id", runId, "--tokens-used", String(batch.tokens_used),
           "--duration-ms", String(Date.now() - startedAt), "--input-chars", String(prompt.length)],
-        { cwd: vault, timeoutMs: 120_000 });
+        { cwd: vault, timeoutMs: 120_000, acceptedExitCodes: [0, 2] });
         const receipt = JSON.parse(lastNonemptyLine(committed.stdout));
-        batch.status = Number(receipt.failed || 0) > 0 ? "failed" : "succeeded";
-        batch.committed = Number(receipt.committed || 0);
-        batch.failed = Number(receipt.failed || 0);
+        await appendLog(logPath, "事务提交", committed.stdout, committed.stderr);
+        applyReceipt(batch, receipt);
       } catch (error) {
-        await writeLog(logPath, "", error instanceof CommandError ? error.stderr : String(error));
+        await appendLog(logPath, "执行失败", error instanceof CommandError ? error.stdout : "",
+          error instanceof CommandError ? error.stderr : String(error));
         await runCommand(process.execPath, [transaction, "fail", "--vault", vault, "--run-id", runId],
           { cwd: vault, timeoutMs: 120_000 }).catch(() => undefined);
         batch.status = "failed";
@@ -119,7 +121,7 @@ export async function runCycle(options = {}) {
       }
     }
     if (summary.status === "running") {
-      summary.status = summary.batches.some((batch) => batch.status === "failed") ? "partial" : "succeeded";
+      summary.status = summary.batches.some((batch) => ["failed", "partial"].includes(batch.status)) ? "partial" : "succeeded";
     }
     return summary;
   } catch (error) {
@@ -173,7 +175,7 @@ function runCommand(command, args, options = {}) {
     }, options.timeoutMs || 120_000);
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve({ stdout, stderr });
+      if ((options.acceptedExitCodes || [0]).includes(code)) resolve({ stdout, stderr, code });
       else reject(new CommandError(command, code, stdout, stderr));
     });
     if (options.input) child.stdin.end(options.input, "utf8");
@@ -183,7 +185,8 @@ function runCommand(command, args, options = {}) {
 
 class CommandError extends Error {
   constructor(command, code, stdout, stderr) {
-    super(`${command} 执行失败，退出码 ${code}`);
+    const detail = firstReadableLine(stderr) || firstReadableLine(stdout);
+    super(`${command} 执行失败，退出码 ${code}${detail ? `：${detail}` : ""}`);
     this.stdout = stdout;
     this.stderr = stderr;
   }
@@ -194,6 +197,40 @@ async function writeLog(filePath, stdout, stderr) {
   const safe = `${String(stdout || "")}\n${String(stderr || "")}`
     .replace(/(receiver_token|X-Obsidian-Capture-Token)["'\s:=]+[^\s,"']+/gi, "$1=[已隐藏]");
   await writeFile(filePath, safe.slice(-4_000_000), "utf8");
+}
+
+async function appendLog(filePath, label, stdout, stderr) {
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(path.dirname(filePath), { recursive: true }));
+  const safe = `\n[${label}]\n${String(stdout || "")}\n${String(stderr || "")}`
+    .replace(/(receiver_token|X-Obsidian-Capture-Token)["'\s:=]+[^\s,"']+/gi, "$1=[已隐藏]");
+  await appendFile(filePath, safe.slice(-1_000_000), "utf8");
+}
+
+function applyReceipt(batch, receipt) {
+  const failed = Number(receipt.failed || 0);
+  const committed = Number(receipt.committed || 0);
+  const status = ["succeeded", "partial", "failed"].includes(receipt.final_status)
+    ? receipt.final_status
+    : failed > 0 ? committed > 0 ? "partial" : "failed" : "succeeded";
+  batch.status = status;
+  batch.committed = committed;
+  batch.failed = failed;
+  if (failed > 0) {
+    batch.error = receiptFailure(receipt);
+    batch.failures = Array.isArray(receipt.failures) ? receipt.failures.slice(0, 8) : [];
+  }
+}
+
+function receiptFailure(receipt) {
+  const failures = Array.isArray(receipt.failures) ? receipt.failures : [];
+  const details = failures.map((item) => [item.title, item.error].filter(Boolean).join("：")).filter(Boolean);
+  return details.length > 0
+    ? `${Number(receipt.failed || details.length)} 个主题未完成沉淀：${details.join("；")}`.slice(0, 1000)
+    : `${Number(receipt.failed || 0)} 个主题未完成沉淀，将在下次重试`;
+}
+
+function firstReadableLine(value) {
+  return String(value || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 300) || "";
 }
 
 function tokenUsage(jsonl) {
