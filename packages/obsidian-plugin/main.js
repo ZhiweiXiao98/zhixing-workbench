@@ -547,26 +547,26 @@ var ArtifactWriter = class {
   }
   app;
   async sync(artifacts) {
-    const result = {
+    const result2 = {
       persistedIds: /* @__PURE__ */ new Set(),
       notes: 0,
       writes: 0,
       errors: []
     };
-    const managed = await this.findManagedFiles(result.errors);
+    const managed = await this.findManagedFiles(result2.errors);
     if (artifacts.length === 0 && managed.length === 0) {
-      return result;
+      return result2;
     }
     try {
       await this.ensureFolder(ARTIFACT_ROOT);
     } catch (error) {
-      result.errors.push(errorMessage(error));
-      return result;
+      result2.errors.push(errorMessage(error));
+      return result2;
     }
-    await this.migrateHistoricalFiles(new Set(artifacts.map((artifact) => artifact.id)), managed, result);
-    const prepared = this.prepareArtifacts(artifacts, managed, result.errors);
+    await this.migrateHistoricalFiles(new Set(artifacts.map((artifact) => artifact.id)), managed, result2);
+    const prepared = this.prepareArtifacts(artifacts, managed, result2.errors);
     const managedDates = new Set(managed.map((entry) => entry.date));
-    const migration = await this.migrateManagedFiles(prepared, managed, result);
+    const migration = await this.migrateManagedFiles(prepared, managed, result2);
     const blockedIds = migration.blockedIds;
     const byDate = groupByDate(prepared);
     const persistedByDate = /* @__PURE__ */ new Map();
@@ -574,7 +574,7 @@ var ArtifactWriter = class {
       try {
         await this.ensureFolder(`${ARTIFACT_ROOT}/${date}`);
       } catch (error) {
-        result.errors.push(errorMessage(error));
+        result2.errors.push(errorMessage(error));
         continue;
       }
       const persisted = [];
@@ -584,12 +584,12 @@ var ArtifactWriter = class {
         }
         try {
           const write = await this.writeManagedFile(artifact.notePath, renderArtifactNote(artifact));
-          result.writes += write ? 1 : 0;
-          result.notes += 1;
-          result.persistedIds.add(artifact.id);
+          result2.writes += write ? 1 : 0;
+          result2.notes += 1;
+          result2.persistedIds.add(artifact.id);
           persisted.push(artifact);
         } catch (error) {
-          result.errors.push(`${artifact.notePath}: ${errorMessage(error)}`);
+          result2.errors.push(`${artifact.notePath}: ${errorMessage(error)}`);
         }
       }
       persistedByDate.set(date, persisted);
@@ -601,9 +601,9 @@ var ArtifactWriter = class {
       }
       try {
         const write = await this.markStale(entry.file);
-        result.writes += write ? 1 : 0;
+        result2.writes += write ? 1 : 0;
       } catch (error) {
-        result.errors.push(`${entry.path}: ${errorMessage(error)}`);
+        result2.errors.push(`${entry.path}: ${errorMessage(error)}`);
       }
     }
     const dates = /* @__PURE__ */ new Set([
@@ -615,12 +615,12 @@ var ArtifactWriter = class {
       const indexPath = dailyArtifactIndexPath(date);
       try {
         const write = await this.writeManagedFile(indexPath, renderDailyArtifactIndex(date, persistedByDate.get(date) ?? []));
-        result.writes += write ? 1 : 0;
+        result2.writes += write ? 1 : 0;
       } catch (error) {
-        result.errors.push(`${indexPath}: ${errorMessage(error)}`);
+        result2.errors.push(`${indexPath}: ${errorMessage(error)}`);
       }
     }
-    return result;
+    return result2;
   }
   prepareArtifacts(artifacts, managed, errors) {
     const prepared = [];
@@ -658,8 +658,8 @@ var ArtifactWriter = class {
   async findManagedFiles(errors) {
     const entries = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
-      const path8 = (0, import_obsidian.normalizePath)(file.path);
-      const pathInfo = managedPathInfo(path8);
+      const path13 = (0, import_obsidian.normalizePath)(file.path);
+      const pathInfo = managedPathInfo(path13);
       if (!pathInfo) {
         continue;
       }
@@ -668,17 +668,17 @@ var ArtifactWriter = class {
         const metadata = readManagedArtifactMetadata(content);
         if (!metadata || metadata.date !== pathInfo.date || metadata.id.startsWith("daily:") !== pathInfo.daily) {
           if (/^zhixing_generated:\s*true\s*$/m.test(content)) {
-            errors.push(`${path8}: \u6258\u7BA1\u6587\u4EF6\u7684 frontmatter\u3001ID \u6216\u6807\u8BB0\u65E0\u6548\uFF0C\u5DF2\u8DF3\u8FC7`);
+            errors.push(`${path13}: \u6258\u7BA1\u6587\u4EF6\u7684 frontmatter\u3001ID \u6216\u6807\u8BB0\u65E0\u6548\uFF0C\u5DF2\u8DF3\u8FC7`);
           }
           continue;
         }
         if (pathInfo.daily && metadata.id !== `daily:${pathInfo.date}`) {
-          errors.push(`${path8}: \u65E5\u7D22\u5F15 ID \u4E0D\u5339\u914D\uFF0C\u5DF2\u8DF3\u8FC7`);
+          errors.push(`${path13}: \u65E5\u7D22\u5F15 ID \u4E0D\u5339\u914D\uFF0C\u5DF2\u8DF3\u8FC7`);
           continue;
         }
         entries.push({
           file,
-          path: path8,
+          path: path13,
           id: metadata.id,
           date: metadata.date,
           daily: pathInfo.daily,
@@ -686,12 +686,12 @@ var ArtifactWriter = class {
           title: metadata.title
         });
       } catch (error) {
-        errors.push(`${path8}: ${errorMessage(error)}`);
+        errors.push(`${path13}: ${errorMessage(error)}`);
       }
     }
     return entries;
   }
-  async migrateManagedFiles(artifacts, managed, result) {
+  async migrateManagedFiles(artifacts, managed, result2) {
     const blockedIds = /* @__PURE__ */ new Set();
     const protectedIds = /* @__PURE__ */ new Set();
     const currentById = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
@@ -736,9 +736,9 @@ var ArtifactWriter = class {
           claimedPaths.add(historyPath);
         });
         try {
-          await this.renameManagedCopies(destinations, result);
+          await this.renameManagedCopies(destinations, result2);
         } catch (error) {
-          result.errors.push(`${id}: \u65E0\u6CD5\u6574\u7406\u540C ID \u7684\u5386\u53F2\u526F\u672C\uFF1A${errorMessage(error)}`);
+          result2.errors.push(`${id}: \u65E0\u6CD5\u6574\u7406\u540C ID \u7684\u5386\u53F2\u526F\u672C\uFF1A${errorMessage(error)}`);
           protectedIds.add(id);
           if (current) {
             blockedIds.add(id);
@@ -754,11 +754,11 @@ var ArtifactWriter = class {
         continue;
       }
       try {
-        await this.renameManagedCopies(/* @__PURE__ */ new Map([[entry, desiredPath]]), result);
+        await this.renameManagedCopies(/* @__PURE__ */ new Map([[entry, desiredPath]]), result2);
         entry.date = date;
         entry.title = title;
       } catch (error) {
-        result.errors.push(`${entry.path}: \u65E0\u6CD5\u8FC1\u79FB\u4E3A ${desiredPath}\uFF1A${errorMessage(error)}`);
+        result2.errors.push(`${entry.path}: \u65E0\u6CD5\u8FC1\u79FB\u4E3A ${desiredPath}\uFF1A${errorMessage(error)}`);
         if (current) {
           blockedIds.add(id);
         }
@@ -766,7 +766,7 @@ var ArtifactWriter = class {
     }
     return { blockedIds, protectedIds };
   }
-  async migrateHistoricalFiles(currentIds, managed, result) {
+  async migrateHistoricalFiles(currentIds, managed, result2) {
     const historical = managed.filter((entry) => !entry.daily && !currentIds.has(entry.id));
     const claimedPaths = /* @__PURE__ */ new Set();
     const destinations = /* @__PURE__ */ new Map();
@@ -784,9 +784,9 @@ var ArtifactWriter = class {
       claimedPaths.add(historyPath);
     }
     try {
-      await this.renameManagedCopies(destinations, result);
+      await this.renameManagedCopies(destinations, result2);
     } catch (error) {
-      result.errors.push(`\u65E0\u6CD5\u6574\u7406\u5386\u53F2\u6210\u679C\uFF1A${errorMessage(error)}`);
+      result2.errors.push(`\u65E0\u6CD5\u6574\u7406\u5386\u53F2\u6210\u679C\uFF1A${errorMessage(error)}`);
     }
   }
   availableHistoryPath(entry, title, claimedPaths) {
@@ -803,7 +803,7 @@ var ArtifactWriter = class {
     }
     throw new Error(`${title} \u7684\u5386\u53F2\u526F\u672C\u6587\u4EF6\u540D\u5DF2\u7528\u5C3D`);
   }
-  async renameManagedCopies(destinations, result) {
+  async renameManagedCopies(destinations, result2) {
     for (const [entry, desiredPath] of destinations) {
       if (entry.path === desiredPath) {
         continue;
@@ -829,11 +829,11 @@ var ArtifactWriter = class {
           const updated = addManagedAlias(current, alias);
           return updated.ok ? updated.content : current;
         });
-        result.writes += 1;
+        result2.writes += 1;
       }
       await this.app.vault.rename(entry.file, desiredPath);
       entry.path = desiredPath;
-      result.writes += 1;
+      result2.writes += 1;
     }
   }
   async ensureFolder(folderPath) {
@@ -951,12 +951,12 @@ function compareManagedCopies(left, right) {
   const rightPrimary = /\/成果-[0-9a-f]{12}\.md$/.test(right.path) ? 0 : 1;
   return leftPrimary - rightPrimary || left.path.localeCompare(right.path);
 }
-function managedPathInfo(path8) {
-  const daily = path8.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\.md$/);
+function managedPathInfo(path13) {
+  const daily = path13.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\.md$/);
   if (daily?.[1] && isValidLocalDate(daily[1])) {
     return { date: daily[1], daily: true };
   }
-  const readable = path8.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\/[^/]+\.md$/);
+  const readable = path13.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\/[^/]+\.md$/);
   if (readable?.[1] && isValidLocalDate(readable[1])) {
     return { date: readable[1], daily: false };
   }
@@ -1295,23 +1295,23 @@ var formatDistanceLocale = {
   }
 };
 var formatDistance = (token, count2, options) => {
-  let result;
+  let result2;
   const tokenValue = formatDistanceLocale[token];
   if (typeof tokenValue === "string") {
-    result = tokenValue;
+    result2 = tokenValue;
   } else if (count2 === 1) {
-    result = tokenValue.one;
+    result2 = tokenValue.one;
   } else {
-    result = tokenValue.other.replace("{{count}}", count2.toString());
+    result2 = tokenValue.other.replace("{{count}}", count2.toString());
   }
   if (options?.addSuffix) {
     if (options.comparison && options.comparison > 0) {
-      return "in " + result;
+      return "in " + result2;
     } else {
-      return result + " ago";
+      return result2 + " ago";
     }
   }
-  return result;
+  return result2;
 };
 
 // node_modules/date-fns/locale/_lib/buildFormatLongFn.js
@@ -2685,19 +2685,19 @@ function parseISO(argument, options) {
     if (isNaN(offset)) return invalidDate();
   } else {
     const tmpDate = new Date(timestamp + time);
-    const result = toDate(0, options?.in);
-    result.setFullYear(
+    const result2 = toDate(0, options?.in);
+    result2.setFullYear(
       tmpDate.getUTCFullYear(),
       tmpDate.getUTCMonth(),
       tmpDate.getUTCDate()
     );
-    result.setHours(
+    result2.setHours(
       tmpDate.getUTCHours(),
       tmpDate.getUTCMinutes(),
       tmpDate.getUTCSeconds(),
       tmpDate.getUTCMilliseconds()
     );
-    return result;
+    return result2;
   }
   return toDate(timestamp + time + offset, options?.in);
 }
@@ -3425,13 +3425,13 @@ function buildGitArtifact(event) {
     });
   }
   const changedFiles2 = fileRefs.map((source) => source.label);
-  const result = changedFiles2.length > 0 ? `${event.title}
+  const result2 = changedFiles2.length > 0 ? `${event.title}
 Git \u63D0\u4EA4\u8BB0\u5F55\u5217\u51FA ${changedFiles2.length} \u4E2A\u76F8\u5173\u6587\u4EF6\uFF1A${changedFiles2.slice(0, 8).join("\u3001")}${changedFiles2.length > 8 ? "\u7B49" : ""}\u3002` : event.title;
   return artifactBase({
     id: hash ? `artifact:git:${hash.toLowerCase()}` : `artifact:${event.objectKey ?? event.id}`,
     event,
     kind: "git-commit",
-    result,
+    result: result2,
     validation: [hash ? `Git \u5386\u53F2\u4E2D\u5B58\u5728\u5B8C\u6574\u63D0\u4EA4 ${hash}\u3002` : "Git \u5386\u53F2\u4E2D\u5B58\u5728\u8BE5\u63D0\u4EA4\u3002"],
     limitations: [],
     proof: "independent",
@@ -3929,8 +3929,8 @@ function artifactTitlePriority(artifact) {
 function outcomeSummary(artifacts) {
   const parts = unique2(artifacts.flatMap((artifact) => {
     const problem = artifact.problem?.split(/\r?\n/).find(Boolean);
-    const result = artifact.result.split(/\r?\n/).find(Boolean);
-    return [problem, result].filter((value) => Boolean(value));
+    const result2 = artifact.result.split(/\r?\n/).find(Boolean);
+    return [problem, result2].filter((value) => Boolean(value));
   }));
   return parts.slice(0, 6).join("\n").slice(0, 1600) || "\u5DF2\u5F62\u6210\u53EF\u8FFD\u6EAF\u7684\u5DE5\u4F5C\u6210\u679C\u3002";
 }
@@ -4059,8 +4059,8 @@ function projectFromCwd(cwd) {
   }
   return identity(label, false);
 }
-function projectFromWikiPath(path8) {
-  const segments = path8.replace(/\\/g, "/").split("/");
+function projectFromWikiPath(path13) {
+  const segments = path13.replace(/\\/g, "/").split("/");
   const folder = segments.length >= 3 ? segments[1] : "\u901A\u7528";
   const label = folder === "\u8865\u5145" || folder?.startsWith("_") ? "\u77E5\u8BC6\u5E93" : folder ?? "\u77E5\u8BC6\u5E93";
   return identity(label, true);
@@ -4111,9 +4111,9 @@ function projectLabelPriority(sourceTypes) {
   }
   return 0;
 }
-function basename(path8) {
-  const parts = path8.split("\\").filter(Boolean);
-  return parts.at(-1) ?? path8;
+function basename(path13) {
+  const parts = path13.split("\\").filter(Boolean);
+  return parts.at(-1) ?? path13;
 }
 
 // src/core/task-identity.ts
@@ -4670,11 +4670,11 @@ function wikiEvent(document, title, project, date, occurredAt, kind, records, ti
     const source = record.source === "chatgpt_web" ? "chatgpt" : "codex";
     dailyPaths.add(`raw/${source}/daily/${toLocalDate(record.captured_at)}.md`);
   }
-  for (const path8 of dailyPaths) {
+  for (const path13 of dailyPaths) {
     sourceRefs.push({
-      type: path8.includes("/chatgpt/") ? "chatgpt" : "codex",
+      type: path13.includes("/chatgpt/") ? "chatgpt" : "codex",
       label: "\u539F\u59CB\u6765\u6E90\u9875",
-      path: path8
+      path: path13
     });
   }
   return {
@@ -5434,27 +5434,27 @@ function knowledgeChanges(value) {
       return [];
     }
     const action = stringValue3(item.action);
-    const path8 = stringValue3(item.path);
-    if (action !== "created" && action !== "updated" || !path8) {
+    const path13 = stringValue3(item.path);
+    if (action !== "created" && action !== "updated" || !path13) {
       return [];
     }
     return [{
       action,
-      path: path8,
-      title: stringValue3(item.title) || fileTitle2(path8),
+      path: path13,
+      title: stringValue3(item.title) || fileTitle2(path13),
       role: item.role === "memory" || item.role === "evidence" ? item.role : void 0
     }];
   });
 }
-function fileTitle2(path8) {
-  return path8.split(/[\\/]/).at(-1)?.replace(/\.md$/i, "") || "\u77E5\u8BC6\u7B14\u8BB0";
+function fileTitle2(path13) {
+  return path13.split(/[\\/]/).at(-1)?.replace(/\.md$/i, "") || "\u77E5\u8BC6\u7B14\u8BB0";
 }
 function stringArray2(value) {
   return Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === "string" && Boolean(item.trim())))] : [];
 }
 function optionalString2(value) {
-  const result = stringValue3(value);
-  return result || void 0;
+  const result2 = stringValue3(value);
+  return result2 || void 0;
 }
 function stringValue3(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -5617,19 +5617,19 @@ var VaultSource = class {
     const rawPaths = new Set(rawFiles.map((file) => file.path));
     const wikiPaths = new Set(wikiFiles.map((file) => file.path));
     const ingestHistoryPaths = new Set(ingestHistoryFiles.map((file) => file.path));
-    for (const path8 of this.rawCache.keys()) {
-      if (!rawPaths.has(path8)) {
-        this.rawCache.delete(path8);
+    for (const path13 of this.rawCache.keys()) {
+      if (!rawPaths.has(path13)) {
+        this.rawCache.delete(path13);
       }
     }
-    for (const path8 of this.wikiCache.keys()) {
-      if (!wikiPaths.has(path8)) {
-        this.wikiCache.delete(path8);
+    for (const path13 of this.wikiCache.keys()) {
+      if (!wikiPaths.has(path13)) {
+        this.wikiCache.delete(path13);
       }
     }
-    for (const path8 of this.ingestHistoryCache.keys()) {
-      if (!ingestHistoryPaths.has(path8)) {
-        this.ingestHistoryCache.delete(path8);
+    for (const path13 of this.ingestHistoryCache.keys()) {
+      if (!ingestHistoryPaths.has(path13)) {
+        this.ingestHistoryCache.delete(path13);
       }
     }
   }
@@ -5791,8 +5791,8 @@ function selectEligibleCodexStops(records, eligibleTurnKeys) {
 function recordTurnKey(record) {
   return `${record.session_id}:${record.turn_id}`;
 }
-function isActivityPath(path8) {
-  return /^raw\/(codex|chatgpt|feishu)\/(events|daily)\//i.test(path8) || /^raw\/codex\/(ingest-history\/|automation\/.*\.log$|ingest-status\.json$|knowledge-settlements\.json$)/i.test(path8) || path8.startsWith("wiki/");
+function isActivityPath(path13) {
+  return /^raw\/(codex|chatgpt|feishu)\/(events|daily)\//i.test(path13) || /^raw\/codex\/(ingest-history\/|automation\/.*\.log$|ingest-status\.json$|knowledge-settlements\.json$)/i.test(path13) || path13.startsWith("wiki/");
 }
 
 // src/graph-filter.ts
@@ -5830,6 +5830,45 @@ function removeFilter(search) {
 // src/view.ts
 var import_electron = require("electron");
 var import_obsidian4 = require("obsidian");
+
+// src/health-view-model.ts
+function factualHealthDisplay(health, labels) {
+  const title = [
+    `\u5DF2\u914D\u7F6E\uFF1A${health.configured ? "\u662F" : "\u5426"}`,
+    `\u5F53\u524D\u7248\u672C\u652F\u6301\uFF1A${health.supported ? "\u662F" : "\u5426"}`,
+    health.last_seen_at ? `\u6700\u540E\u63A2\u6D3B\uFF1A${formatHealthTime(health.last_seen_at)}` : "\u5C1A\u672A\u63A2\u6D3B",
+    health.last_event_at ? `\u6700\u540E\u4E8B\u4EF6\uFF1A${formatHealthTime(health.last_event_at)}` : "\u5C1A\u672A\u6536\u5230\u4E8B\u4EF6",
+    health.error
+  ].filter(Boolean).join(" \xB7 ");
+  if (!health.configured || !health.supported || health.error) {
+    return { state: "unavailable", label: labels.unavailable, title };
+  }
+  if (!health.last_event_at) return { state: "starting", label: labels.waiting, title };
+  if (health.stale) return { state: "starting", label: labels.stale, title };
+  return { state: "ready", label: labels.ready, title };
+}
+function canRunKnowledgeNow(health) {
+  return health.organizer.runtime.supported && health.organizer.executor.supported && !health.running && health.schedulerHost?.phase !== "processing";
+}
+function scheduleHealthLabel(health, formatTime) {
+  if (health.schedulerHost.phase === "processing") {
+    if (health.schedulerHost.owner_kind === "background") return "\u540E\u53F0\u6B63\u5728\u5904\u7406";
+    if (health.schedulerHost.owner_kind === "manual") return "\u6B63\u5728\u624B\u52A8\u6574\u7406";
+    return "Obsidian \u6B63\u5728\u5904\u7406";
+  }
+  if (health.schedule.status === "backoff") {
+    return health.schedule.next_due ? `\u6574\u7406\u5931\u8D25\uFF0C${formatTime(health.schedule.next_due)} \u81EA\u52A8\u91CD\u8BD5` : "\u6574\u7406\u5931\u8D25\uFF0C\u7B49\u5F85\u81EA\u52A8\u91CD\u8BD5";
+  }
+  if (health.schedulerHost.phase === "error") return health.schedulerHost.error || "\u540E\u53F0\u8C03\u5EA6\u5931\u8D25";
+  if (!health.schedulerHost.supported) {
+    return health.schedulerHost.configured ? "\u540E\u53F0\u8C03\u5EA6\u7B49\u5F85\u767B\u5F55\u542F\u52A8 \xB7 \u6253\u5F00 Obsidian \u65F6\u4ECD\u4F1A\u8865\u8DD1" : "\u4EC5\u5728 Obsidian \u6253\u5F00\u65F6\u68C0\u67E5\u8865\u8DD1";
+  }
+  return health.schedule.next_due ? `\u540E\u53F0\u5B88\u5019 23:30 \xB7 \u4E0B\u6B21\u68C0\u67E5 ${formatTime(health.schedule.next_due)}` : "\u540E\u53F0\u5B88\u5019\u6BCF\u5929 23:30";
+}
+function formatHealthTime(value) {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString("zh-CN", { hour12: false }) : value;
+}
 
 // src/feishu-settings.ts
 var import_obsidian3 = require("obsidian");
@@ -6386,7 +6425,7 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
     const schedule = toolbar.createDiv({ cls: "activity-ingest-schedule" });
     const scheduleIcon = schedule.createSpan();
     (0, import_obsidian4.setIcon)(scheduleIcon, "clock-3");
-    schedule.createSpan({ text: "\u6BCF\u5929 23:30 \u81EA\u52A8\u6574\u7406" });
+    schedule.createSpan({ text: this.suiteHealth ? scheduleHealthLabel(this.suiteHealth, formatDateTime) : "\u7B49\u5F85\u8C03\u5EA6\u72B6\u6001" });
     toolbar.createSpan({
       cls: "activity-artifact-range-summary",
       text: queue ? `\u53EF\u6574\u7406 ${queue.readyTopics} \xB7 \u6536\u96C6\u4E2D ${queue.openTopics}${queue.coolingRetryTopics ? ` \xB7 \u51B7\u5374\u91CD\u8BD5 ${queue.coolingRetryTopics}` : ""}${queue.needsCompactionTopics ? ` \xB7 \u5F85\u538B\u7F29 ${queue.needsCompactionTopics}` : ""} \xB7 \u603B\u8BA1 ${queue.remainingTopics} \u4E2A\u4E3B\u9898` : "\u6574\u7406\u961F\u5217\u72B6\u6001\u5C1A\u672A\u5EFA\u7ACB"
@@ -6417,23 +6456,39 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
     if (!health) return;
     const panel = parent.createDiv({ cls: "zhixing-suite-health" });
     panel.createSpan({ cls: "zhixing-suite-version", text: `v${health.version}` });
-    const receiver = panel.createSpan({ cls: `zhixing-health-chip is-${health.receiver}` });
-    (0, import_obsidian4.setIcon)(receiver, health.receiver === "ready" ? "radio-tower" : "triangle-alert");
-    receiver.createSpan({ text: health.receiver === "ready" ? "\u7F51\u9875\u91C7\u96C6\u6B63\u5E38" : "\u7F51\u9875\u91C7\u96C6\u5F02\u5E38" });
-    receiver.setAttribute("title", health.receiverMessage);
-    const runtime = panel.createSpan({ cls: `zhixing-health-chip is-${health.runtime}` });
-    (0, import_obsidian4.setIcon)(runtime, health.runtime === "ready" ? "brain-circuit" : "circle-dashed");
-    runtime.createSpan({ text: health.runtime === "ready" ? "\u77E5\u8BC6\u6574\u7406\u5C31\u7EEA" : "\u77E5\u8BC6\u8FD0\u884C\u65F6\u7F3A\u5931" });
-    const codex = panel.createSpan({ cls: `zhixing-health-chip is-${health.codex}` });
-    (0, import_obsidian4.setIcon)(codex, health.codex === "ready" ? "terminal" : "circle-dashed");
-    codex.createSpan({ text: health.codex === "ready" ? "Codex \u5C31\u7EEA" : "Codex \u672A\u8FDE\u63A5" });
+    this.renderFactualHealthChip(panel, health.capture.desktop, "monitor-dot", {
+      ready: "\u684C\u9762\u91C7\u96C6\u6B63\u5E38",
+      waiting: "\u684C\u9762\u91C7\u96C6\u7B49\u5F85\u4E8B\u4EF6",
+      stale: "\u684C\u9762\u91C7\u96C6\u5DF2\u4E45\u672A\u66F4\u65B0",
+      unavailable: "\u684C\u9762\u91C7\u96C6\u5F02\u5E38"
+    });
+    this.renderFactualHealthChip(panel, health.capture.cliHook, "terminal", {
+      ready: "CLI \u91C7\u96C6\u6B63\u5E38",
+      waiting: "CLI Hook \u7B49\u5F85\u4E8B\u4EF6",
+      stale: "CLI \u91C7\u96C6\u5DF2\u4E45\u672A\u66F4\u65B0",
+      unavailable: "CLI \u91C7\u96C6\u672A\u5C31\u7EEA"
+    });
+    this.renderFactualHealthChip(panel, health.web, "radio-tower", {
+      ready: "\u7F51\u9875\u91C7\u96C6\u6B63\u5E38",
+      waiting: "\u7F51\u9875\u91C7\u96C6\u7B49\u5F85\u4E8B\u4EF6",
+      stale: "\u7F51\u9875\u91C7\u96C6\u5DF2\u4E45\u672A\u66F4\u65B0",
+      unavailable: "\u7F51\u9875\u91C7\u96C6\u5F02\u5E38"
+    });
+    this.renderFactualHealthChip(panel, health.organizer.runtime.supported ? health.organizer.executor : health.organizer.runtime, "brain-circuit", {
+      ready: "\u77E5\u8BC6\u6574\u7406\u5C31\u7EEA",
+      waiting: "\u77E5\u8BC6\u6574\u7406\u7B49\u5F85\u9996\u8F6E",
+      stale: "\u77E5\u8BC6\u6574\u7406\u5DF2\u4E45\u672A\u8FD0\u884C",
+      unavailable: "\u77E5\u8BC6\u6574\u7406\u4E0D\u53EF\u7528"
+    });
     const feishu = panel.createSpan({ cls: `zhixing-health-chip is-${health.feishu.status === "ready" ? "ready" : health.feishu.status === "disabled" ? "starting" : "unavailable"}` });
     (0, import_obsidian4.setIcon)(feishu, health.feishu.status === "ready" ? "message-square-check" : health.feishu.status === "disabled" ? "message-square-dashed" : "message-square-warning");
-    feishu.createSpan({ text: health.feishu.status === "ready" ? `\u98DE\u4E66\u6B63\u5E38${health.feishu.pending ? ` \xB7 \u5F85\u6574\u7406 ${health.feishu.pending}` : ""}` : health.feishu.status === "disabled" ? "\u98DE\u4E66\u672A\u8FDE\u63A5" : health.feishu.failedModules ? `\u98DE\u4E66\u5F85\u91CD\u8BD5 ${health.feishu.failedModules}` : "\u98DE\u4E66\u4E0D\u53EF\u7528" });
+    feishu.createSpan({ text: health.feishu.status === "ready" ? `\u98DE\u4E66\u6B63\u5E38${health.feishu.pending ? ` \xB7 \u5F85\u6574\u7406 ${health.feishu.pending}` : ""}` : health.feishu.status === "disabled" ? "\u98DE\u4E66\u672A\u8FDE\u63A5" : health.feishu.status === "unavailable" ? "\u98DE\u4E66\u4E0D\u53EF\u7528" : health.feishu.failedModules ? `\u98DE\u4E66\u5F85\u91CD\u8BD5 ${health.feishu.failedModules}` : !health.feishu.lastSync ? "\u98DE\u4E66\u7B49\u5F85\u9996\u6B21\u540C\u6B65" : "\u98DE\u4E66\u5DF2\u4E45\u672A\u540C\u6B65" });
     feishu.setAttribute("title", [
       health.feishu.message,
       health.feishu.identityLabel,
+      health.feishu.lastSeenAt ? `\u6700\u540E\u63A2\u6D3B ${formatDateTime(health.feishu.lastSeenAt)}` : "",
       health.feishu.lastSync ? `\u6700\u540E\u540C\u6B65 ${formatDateTime(health.feishu.lastSync)}` : "",
+      health.feishu.error,
       health.feishu.selectedChats ? `${health.feishu.selectedChats} \u4E2A\u9879\u76EE\u7FA4` : "",
       health.feishu.selectedBases ? `${health.feishu.selectedBases} \u4E2A Base \u89C6\u56FE` : ""
     ].filter(Boolean).join(" \xB7 "));
@@ -6443,7 +6498,7 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
     const extension = this.iconButton(panel, "folder-open", "\u6253\u5F00\u6D4F\u89C8\u5668\u6269\u5C55\u76EE\u5F55", "open-browser-extension-folder");
     extension.addEventListener("click", () => void this.suite.openBrowserExtensionFolder());
     const run = this.iconButton(panel, health.running ? "loader-circle" : "sparkles", health.running ? "\u6B63\u5728\u6574\u7406" : "\u7ACB\u5373\u6574\u7406", "run-knowledge-now");
-    run.disabled = health.runtime !== "ready" || health.codex !== "ready" || health.running;
+    run.disabled = !canRunKnowledgeNow(health);
     run.addEventListener("click", () => void this.suite.runKnowledgeNow());
     const sources = this.iconButton(panel, "database", "\u6570\u636E\u6765\u6E90\u8BBE\u7F6E", "open-data-sources");
     sources.addEventListener("click", () => new FeishuSetupModal(this.app, this.suite).open());
@@ -6454,6 +6509,13 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
     }
     const update = this.iconTextButton(panel, "cloud-download", updateLabel, "check-suite-update");
     update.addEventListener("click", () => void this.suite.checkForUpdate());
+  }
+  renderFactualHealthChip(parent, health, icon, labels) {
+    const display = factualHealthDisplay(health, labels);
+    const chip = parent.createSpan({ cls: `zhixing-health-chip is-${display.state}` });
+    (0, import_obsidian4.setIcon)(chip, display.state === "unavailable" ? "triangle-alert" : icon);
+    chip.createSpan({ text: display.label });
+    chip.setAttribute("title", display.title);
   }
   renderIngestRunRow(parent, run) {
     const display = ingestRunDisplay(run);
@@ -6566,8 +6628,8 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
       });
       const actions = item.createDiv({ cls: "activity-ingest-topic-actions" });
       if (topic.memoryPath) {
-        const open = this.iconTextButton(actions, "book-open-text", "\u6253\u5F00\u6211\u7684\u7ECF\u5386");
-        open.addEventListener("click", () => void this.openSource({
+        const open3 = this.iconTextButton(actions, "book-open-text", "\u6253\u5F00\u6211\u7684\u7ECF\u5386");
+        open3.addEventListener("click", () => void this.openSource({
           type: "wiki",
           label: topic.memoryPath,
           path: topic.memoryPath
@@ -6577,16 +6639,16 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
       for (const wikiPath of evidencePaths.slice(0, topic.memoryPath ? 1 : 2)) {
         const change = topic.wikiChanges.find((item2) => item2.path === wikiPath);
         const wikiTitle = change?.title ?? wikiPath.split("/").at(-1)?.replace(/\.md$/i, "") ?? "\u6280\u672F\u8BC1\u636E";
-        const open = this.iconTextButton(actions, "database", `\u67E5\u770B\u8BC1\u636E\u300A${wikiTitle}\u300B`);
-        open.addEventListener("click", () => void this.openSource({
+        const open3 = this.iconTextButton(actions, "database", `\u67E5\u770B\u8BC1\u636E\u300A${wikiTitle}\u300B`);
+        open3.addEventListener("click", () => void this.openSource({
           type: "wiki",
           label: wikiPath,
           path: wikiPath
         }));
       }
       for (const dailyPath of topic.dailyPaths.slice(0, 2)) {
-        const open = this.iconButton(actions, "file-text", `\u6253\u5F00\u6BCF\u65E5\u6765\u6E90\uFF1A${dailyPath}`);
-        open.addEventListener("click", () => void this.openSource({
+        const open3 = this.iconButton(actions, "file-text", `\u6253\u5F00\u6BCF\u65E5\u6765\u6E90\uFF1A${dailyPath}`);
+        open3.addEventListener("click", () => void this.openSource({
           type: "file",
           label: dailyPath,
           path: dailyPath
@@ -7211,8 +7273,8 @@ var SourceEvidenceModal = class extends import_obsidian4.Modal {
       new import_obsidian4.Notice("\u6765\u6E90\u8DEF\u5F84\u5DF2\u590D\u5236");
     });
     if (this.source.path && (this.source.type === "git" || this.source.type === "file")) {
-      const open = actions.createEl("button", { text: "\u5728\u7CFB\u7EDF\u4E2D\u6253\u5F00" });
-      open.addEventListener("click", async () => {
+      const open3 = actions.createEl("button", { text: "\u5728\u7CFB\u7EDF\u4E2D\u6253\u5F00" });
+      open3.addEventListener("click", async () => {
         const error = await import_electron.shell.openPath(this.source.path ?? "");
         if (error) {
           new import_obsidian4.Notice(`\u65E0\u6CD5\u6253\u5F00\uFF1A${error}`);
@@ -7355,13 +7417,13 @@ function isAbsolutePath(value) {
 }
 
 // src/suite-service.ts
-var import_node_crypto5 = require("node:crypto");
-var import_node_child_process3 = require("node:child_process");
-var import_promises5 = require("node:fs/promises");
+var import_node_crypto7 = require("node:crypto");
+var import_node_child_process4 = require("node:child_process");
+var import_promises9 = require("node:fs/promises");
 var import_node_http = __toESM(require("node:http"), 1);
-var import_node_os3 = require("node:os");
-var import_node_path7 = __toESM(require("node:path"), 1);
-var import_node_util3 = require("node:util");
+var import_node_os5 = require("node:os");
+var import_node_path12 = __toESM(require("node:path"), 1);
+var import_node_util4 = require("node:util");
 var import_obsidian5 = require("obsidian");
 var import_electron2 = require("electron");
 
@@ -7377,48 +7439,146 @@ async function discoverExecutable(name, options = {}) {
   const platform = options.platform || process.platform;
   const home = options.home || (0, import_node_os2.homedir)();
   const env = options.env || process.env;
-  const executableName = platform === "win32" && name === "codex" ? "codex.exe" : platform === "win32" && name === "lark-cli" ? "lark-cli.cmd" : name;
-  const located = await locateFromPath(executableName, platform, env, options.execFile || execFileAsync2);
-  for (const candidate of located) {
-    const resolved = await normalizeCandidate(name, candidate, platform, options.access || import_promises4.access);
-    if (resolved) return { path: resolved, source: "path" };
+  const execute = options.execFile || execFileAsync2;
+  const checkAccess = options.access || import_promises4.access;
+  const readDirectory = options.readdir || import_promises4.readdir;
+  const candidates = [];
+  const configured = name === "codex" ? env.CODEX_BIN : env.LARK_CLI_BIN;
+  if (configured) candidates.push({ path: configured, source: "configured" });
+  for (const candidate of await locateFromPath(name, platform, env, execute)) {
+    candidates.push({ path: candidate, source: "path" });
   }
-  if (platform === "win32") return null;
-  const candidates = [
-    ...splitPath(env.PATH, platform).map((directory) => import_node_path6.default.join(directory, name)),
-    import_node_path6.default.join(home, ".local", "bin", name),
-    import_node_path6.default.join(home, ".npm-global", "bin", name),
-    import_node_path6.default.join(home, ".volta", "bin", name),
-    import_node_path6.default.join(home, ".asdf", "shims", name),
-    import_node_path6.default.join(home, ".local", "share", "mise", "shims", name),
-    import_node_path6.default.join(home, ".bun", "bin", name),
-    `/opt/homebrew/bin/${name}`,
-    `/usr/local/bin/${name}`,
-    `/usr/bin/${name}`
-  ];
-  for (const directory of await nodeVersionBins(home, options.readdir || import_promises4.readdir)) {
-    candidates.push(import_node_path6.default.join(directory, name));
+  if (platform === "win32") {
+    candidates.push(...await windowsCandidates(name, home, env, readDirectory));
+  } else {
+    const common = [
+      ...splitPath(env.PATH, platform).map((directory) => import_node_path6.default.join(directory, name)),
+      import_node_path6.default.join(home, ".local", "bin", name),
+      import_node_path6.default.join(home, ".npm-global", "bin", name),
+      import_node_path6.default.join(home, ".volta", "bin", name),
+      import_node_path6.default.join(home, ".asdf", "shims", name),
+      import_node_path6.default.join(home, ".local", "share", "mise", "shims", name),
+      import_node_path6.default.join(home, ".bun", "bin", name),
+      `/opt/homebrew/bin/${name}`,
+      `/usr/local/bin/${name}`,
+      `/usr/bin/${name}`
+    ];
+    for (const directory of await nodeVersionBins(home, readDirectory)) common.push(import_node_path6.default.join(directory, name));
+    candidates.push(...common.map((candidate) => ({ path: candidate, source: "common-location" })));
   }
-  for (const candidate of unique3(candidates)) {
-    if (await isExecutable(candidate, options.access || import_promises4.access)) return { path: candidate, source: "common-location" };
+  for (const candidate of uniqueCandidates(candidates)) {
+    const resolved = await normalizeCandidate(name, candidate.path, platform, checkAccess);
+    if (!resolved) continue;
+    const probe = await probeExecutable(name, resolved, env, execute);
+    if (probe.supported) return { path: resolved, source: candidate.source, version: probe.version };
   }
   return null;
+}
+async function probeCodexExecutor(executable, options = {}) {
+  if (!executable) return { supported: false, error: "\u672A\u627E\u5230 Codex CLI" };
+  const execute = options.execFile || execFileAsync2;
+  try {
+    const commandOptions = {
+      env: options.env || process.env,
+      timeout: options.timeout || 8e3,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024
+    };
+    await execute(executable, ["exec", "--help"], commandOptions);
+    await execute(executable, ["login", "status"], commandOptions);
+    return { supported: true, error: null };
+  } catch (error) {
+    return { supported: false, error: safeError(error, "Codex \u6574\u7406\u6267\u884C\u5668\u63A2\u6D3B\u5931\u8D25") };
+  }
+}
+async function windowsCandidates(name, home, env, readDirectory) {
+  const p = import_node_path6.default.win32;
+  const localAppData = env.LOCALAPPDATA || p.join(home, "AppData", "Local");
+  const appData = env.APPDATA || p.join(home, "AppData", "Roaming");
+  const candidates = [];
+  if (name === "codex") {
+    const runtimeRoot = p.join(localAppData, "OpenAI", "Codex", "bin");
+    try {
+      const versions = (await readDirectory(runtimeRoot, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().reverse();
+      for (const version of versions) {
+        candidates.push({ path: p.join(runtimeRoot, version, "codex.exe"), source: "desktop-runtime" });
+      }
+    } catch {
+    }
+    candidates.push({ path: p.join(localAppData, "OpenAI", "Codex", "codex.exe"), source: "desktop-runtime" });
+    for (const [packageName, vendor] of [
+      ["codex-win32-x64", "x86_64-pc-windows-msvc"],
+      ["codex-win32-arm64", "aarch64-pc-windows-msvc"]
+    ]) {
+      candidates.push({ path: p.join(
+        appData,
+        "npm",
+        "node_modules",
+        "@openai",
+        "codex",
+        "node_modules",
+        "@openai",
+        packageName,
+        "vendor",
+        vendor,
+        "bin",
+        "codex.exe"
+      ), source: "common-location" });
+    }
+  }
+  if (name === "lark-cli") {
+    candidates.push({ path: p.join(appData, "npm", "node_modules", "@larksuite", "cli", "bin", "lark-cli.exe"), source: "common-location" });
+  }
+  return candidates;
 }
 async function locateFromPath(name, platform, env, execute) {
   const locator = platform === "win32" ? "where.exe" : "/usr/bin/which";
   try {
-    const result = await execute(locator, [name], { env, timeout: 5e3, windowsHide: true });
-    return String(result.stdout || "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+    const result2 = await execute(locator, [name], { env, timeout: 5e3, windowsHide: true });
+    return String(result2.stdout || "").split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
   } catch {
     return [];
   }
 }
 async function normalizeCandidate(name, candidate, platform, checkAccess) {
+  const p = platform === "win32" ? import_node_path6.default.win32 : import_node_path6.default;
   if (platform === "win32" && name === "lark-cli" && /lark-cli\.cmd$/i.test(candidate)) {
-    const native = import_node_path6.default.join(import_node_path6.default.dirname(candidate), "node_modules", "@larksuite", "cli", "bin", "lark-cli.exe");
+    const native = p.join(p.dirname(candidate), "node_modules", "@larksuite", "cli", "bin", "lark-cli.exe");
     return await isExecutable(native, checkAccess, false) ? native : null;
   }
+  if (platform === "win32" && name === "codex" && /codex\.cmd$/i.test(candidate)) {
+    const native = p.join(
+      p.dirname(candidate),
+      "node_modules",
+      "@openai",
+      "codex",
+      "node_modules",
+      "@openai",
+      "codex-win32-x64",
+      "vendor",
+      "x86_64-pc-windows-msvc",
+      "bin",
+      "codex.exe"
+    );
+    return await isExecutable(native, checkAccess, false) ? native : null;
+  }
+  if (platform === "win32" && /\.cmd$/i.test(candidate)) return null;
   return await isExecutable(candidate, checkAccess, platform !== "win32") ? candidate : null;
+}
+async function probeExecutable(name, candidate, env, execute) {
+  try {
+    const result2 = await execute(candidate, ["--version"], {
+      env,
+      timeout: 8e3,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024
+    });
+    const output = `${result2.stdout || ""}
+${result2.stderr || ""}`.trim();
+    return { supported: true, version: output.split(/\r?\n/).find(Boolean)?.slice(0, 160) || null };
+  } catch (error) {
+    return { supported: false, version: null, error: safeError(error, `${name} --version \u63A2\u6D3B\u5931\u8D25`) };
+  }
 }
 async function isExecutable(candidate, checkAccess, requireExecute = true) {
   try {
@@ -7440,12 +7600,1016 @@ async function nodeVersionBins(home, readDirectory) {
 function splitPath(value, platform) {
   return String(value || "").split(platform === "win32" ? ";" : ":").map((item) => item.trim()).filter(Boolean);
 }
-function unique3(values) {
-  return [...new Set(values.filter(Boolean))];
+function uniqueCandidates(values) {
+  const seen = /* @__PURE__ */ new Set();
+  return values.filter((item) => {
+    const key = String(item.path || "").toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function safeError(error, fallback) {
+  const value = error instanceof Error ? error.message : String(error || fallback);
+  return value.replace(/[\r\n]+/g, " ").slice(0, 240) || fallback;
+}
+
+// ../runtime/src/codex-desktop-source.mjs
+var import_promises6 = require("node:fs/promises");
+var import_node_os4 = require("node:os");
+var import_node_path8 = __toESM(require("node:path"), 1);
+
+// ../runtime/src/common.mjs
+var import_node_crypto5 = require("node:crypto");
+var import_promises5 = require("node:fs/promises");
+var import_node_os3 = require("node:os");
+var import_node_path7 = __toESM(require("node:path"), 1);
+function localDate(value = /* @__PURE__ */ new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  }).formatToParts(value);
+  const get = (type) => parts.find((part) => part.type === type)?.value;
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+function sha256(value) {
+  return (0, import_node_crypto5.createHash)("sha256").update(value).digest("hex");
+}
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+function redactText(input) {
+  let text = String(input || "");
+  const rules = [
+    [/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/gi, "[\u5DF2\u9690\u85CF\u79C1\u94A5]"],
+    [/\b(?:sk|rk|pk)-(?:proj-)?[A-Za-z0-9_-]{16,}\b/g, "[\u5DF2\u9690\u85CF\u5BC6\u94A5]"],
+    [/\b(?:ghp|github_pat|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{16,}\b/g, "[\u5DF2\u9690\u85CF GitHub \u51ED\u636E]"],
+    [/\bAKIA[0-9A-Z]{16}\b/g, "[\u5DF2\u9690\u85CF\u4E91\u51ED\u636E]"],
+    [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "[\u5DF2\u9690\u85CF\u4EE4\u724C]"],
+    [/\b(authorization|api[_ -]?key|access[_ -]?token|password|passwd|secret)\s*[:=]\s*["']?[^\s,"']{6,}/gi, "$1=[\u5DF2\u9690\u85CF]"],
+    [/\b(postgres(?:ql)?|mysql|mongodb(?:\+srv)?):\/\/[^\s/@:]+:[^\s/@]+@/gi, "$1://[\u5DF2\u9690\u85CF]@"]
+  ];
+  for (const [pattern, replacement] of rules) text = text.replace(pattern, replacement);
+  return text;
+}
+async function readJson(filePath, fallback = null) {
+  try {
+    return JSON.parse(await (0, import_promises5.readFile)(filePath, "utf8"));
+  } catch {
+    return fallback;
+  }
+}
+async function atomicJson(filePath, value) {
+  await (0, import_promises5.mkdir)(import_node_path7.default.dirname(filePath), { recursive: true });
+  const temporary = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await (0, import_promises5.writeFile)(temporary, `${JSON.stringify(value, null, 2)}
+`, "utf8");
+  await (0, import_promises5.rename)(temporary, filePath);
+}
+async function appendJsonLine(filePath, value) {
+  await (0, import_promises5.mkdir)(import_node_path7.default.dirname(filePath), { recursive: true });
+  const handle = await (0, import_promises5.open)(filePath, "a");
+  try {
+    await handle.write(`${JSON.stringify(value)}
+`, null, "utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+// ../runtime/src/codex-desktop-source.mjs
+var STATE_SCHEMA = 1;
+var SOURCE_TYPE = "codex_desktop_sessions_v1";
+var CAPTURE_SOURCE = "codex_desktop";
+var DEFAULT_STALE_MS = 36 * 60 * 6e4;
+var DEFAULT_BOOTSTRAP_LOOKBACK_MS = 24 * 60 * 6e4;
+var VERIFIED_PRODUCER_MINORS = /* @__PURE__ */ new Set([144, 147]);
+async function syncCodexDesktop(options) {
+  const vault = import_node_path8.default.resolve(options.vault);
+  const codexHome = import_node_path8.default.resolve(options.codexHome || process.env.CODEX_HOME || import_node_path8.default.join((0, import_node_os4.homedir)(), ".codex"));
+  const sessionsRoot = import_node_path8.default.join(codexHome, "sessions");
+  const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
+  const nowIso = now.toISOString();
+  const statePath = import_node_path8.default.join(vault, "raw", "codex", "sources", "desktop-state.json");
+  const previous = normalizeState(await readJson(statePath, null));
+  const state = { ...previous, checkpoints: { ...previous.checkpoints }, last_sync_at: nowIso };
+  let files;
+  try {
+    files = (await listJsonlFiles(sessionsRoot, options.readdir || import_promises6.readdir)).slice(-500);
+    state.configured = true;
+  } catch (error) {
+    const health = failureHealth(state, now, `\u65E0\u6CD5\u8BFB\u53D6 Codex Desktop \u4F1A\u8BDD\u76EE\u5F55\uFF1A${safeError2(error)}`);
+    await atomicJson(statePath, health);
+    return result(health, 0, 0, 0);
+  }
+  const knownIds = await readKnownEventIds(import_node_path8.default.join(vault, "raw", "codex", "events"));
+  const rawLastEventAt = await readLastCodexEventAt(import_node_path8.default.join(vault, "raw", "codex", "events"));
+  const bootstrapAfter = rawLastEventAt || new Date(now.getTime() - (options.bootstrapLookbackMs ?? DEFAULT_BOOTSTRAP_LOOKBACK_MS)).toISOString();
+  const inspectedMetadata = await inspectNewestDesktopMetadata(sessionsRoot).catch(() => null);
+  const appended = [];
+  const errors = [];
+  let supportedFiles = inspectedMetadata && supportedProducer(inspectedMetadata.producer_version) ? 1 : 0;
+  let duplicates = 0;
+  let completedTurns = 0;
+  for (const file of files) {
+    const relative = import_node_path8.default.relative(sessionsRoot, file).split(import_node_path8.default.sep).join("/");
+    const previousCheckpoint = normalizeCheckpoint(state.checkpoints[relative]);
+    try {
+      const info = await (0, import_promises6.stat)(file);
+      const startOffset = info.size < previousCheckpoint.offset ? 0 : Math.min(previousCheckpoint.offset, info.size);
+      const bootstrapCutoff = Math.min(Date.parse(bootstrapAfter), now.getTime() - 5 * 6e4);
+      if (previousCheckpoint.offset === 0 && !previousCheckpoint.session_id && info.mtimeMs <= bootstrapCutoff) {
+        state.checkpoints[relative] = { ...previousCheckpoint, offset: info.size, size: info.size, mtime_ms: info.mtimeMs };
+        continue;
+      }
+      if (startOffset === info.size) {
+        state.checkpoints[relative] = { ...previousCheckpoint, size: info.size, mtime_ms: info.mtimeMs };
+        if (previousCheckpoint.originator === "Codex Desktop" && supportedProducer(previousCheckpoint.producer_version)) supportedFiles += 1;
+        continue;
+      }
+      let checkpoint = { ...previousCheckpoint };
+      if (startOffset > 0 && !checkpoint.session_id) {
+        const metadataRecords = parseLines((await readFileRange(file, 0, Math.min(info.size, 2 * 1024 * 1024))).toString("utf8"), true).records;
+        checkpoint = normalizeDesktopRecords(metadataRecords, checkpoint).checkpoint;
+      }
+      const slice = await readFileRange(file, startOffset, info.size - startOffset);
+      const lastNewline = slice.lastIndexOf(10);
+      if (lastNewline < 0) continue;
+      const completeBytes = slice.subarray(0, lastNewline + 1);
+      checkpoint = { ...checkpoint, offset: startOffset + lastNewline + 1, size: info.size, mtime_ms: info.mtimeMs };
+      const parsed = parseLines(completeBytes.toString("utf8"));
+      if (parsed.invalid > 0) {
+        errors.push(`${relative}: \u7ED3\u6784\u5316\u4E8B\u4EF6\u5305\u542B ${parsed.invalid} \u884C\u65E0\u6CD5\u89E3\u6790\uFF0C\u6E38\u6807\u672A\u63A8\u8FDB`);
+        continue;
+      }
+      const records = parsed.records;
+      const normalized = normalizeDesktopRecords(records, checkpoint, {
+        bootstrapAfter: previousCheckpoint.offset > 0 ? null : bootstrapAfter
+      });
+      if (normalized.desktop && normalized.supported) supportedFiles += 1;
+      if (normalized.error) {
+        errors.push(`${relative}: ${normalized.error}\uFF0C\u6E38\u6807\u672A\u63A8\u8FDB`);
+        continue;
+      }
+      state.checkpoints[relative] = normalized.checkpoint;
+      for (const event of normalized.events) {
+        if (knownIds.has(event.event_id)) {
+          duplicates += 1;
+          continue;
+        }
+        knownIds.add(event.event_id);
+        appended.push(event);
+        if (event.event === "Stop") completedTurns += 1;
+      }
+    } catch (error) {
+      errors.push(`${relative}: ${safeError2(error)}`);
+    }
+  }
+  appended.sort((left, right) => left.captured_at.localeCompare(right.captured_at));
+  for (const event of appended) {
+    await appendJsonLine(import_node_path8.default.join(vault, "raw", "codex", "events", `${event.date}.jsonl`), event);
+  }
+  const newest = appended.reduce((value, event) => maxIso(value, event.captured_at), state.last_event_at || null);
+  state.supported = supportedFiles > 0;
+  state.producer_versions = [...new Set([...Object.values(state.checkpoints).filter((item) => item?.originator === "Codex Desktop" && item?.producer_version).map((item) => item.producer_version), inspectedMetadata?.producer_version].filter(Boolean))].sort();
+  state.last_seen_at = supportedFiles > 0 ? nowIso : state.last_seen_at;
+  state.last_event_at = newest;
+  state.error = errors.length > 0 ? errors.slice(0, 3).join("\uFF1B").slice(0, 600) : supportedFiles === 0 ? "\u5C1A\u672A\u53D1\u73B0\u53D7\u652F\u6301\u7684 Codex Desktop \u4F1A\u8BDD" : null;
+  state.stale = isStale(state.last_event_at, now, options.staleAfterMs ?? DEFAULT_STALE_MS);
+  await atomicJson(statePath, state);
+  return result(state, appended.length, duplicates, completedTurns);
+}
+async function readCodexDesktopHealth(options) {
+  const vault = import_node_path8.default.resolve(options.vault);
+  const codexHome = import_node_path8.default.resolve(options.codexHome || process.env.CODEX_HOME || import_node_path8.default.join((0, import_node_os4.homedir)(), ".codex"));
+  const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
+  const state = normalizeState(await readJson(import_node_path8.default.join(vault, "raw", "codex", "sources", "desktop-state.json"), null));
+  try {
+    await (0, import_promises6.stat)(import_node_path8.default.join(codexHome, "sessions"));
+    state.configured = true;
+    const metadata = await inspectNewestDesktopMetadata(import_node_path8.default.join(codexHome, "sessions"));
+    if (metadata) {
+      state.supported = supportedProducer(metadata.producer_version);
+      state.last_seen_at = now.toISOString();
+      state.producer_versions = [metadata.producer_version].filter(Boolean);
+      state.error = state.supported ? state.error?.startsWith("\u4E0D\u652F\u6301\u7684 Codex Desktop \u6570\u636E\u7248\u672C") ? null : state.error : `\u4E0D\u652F\u6301\u7684 Codex Desktop \u6570\u636E\u7248\u672C ${metadata.producer_version || "\u672A\u77E5"}`;
+    } else if (!state.supported) {
+      state.error = state.error || "\u5C1A\u672A\u53D1\u73B0\u53EF\u8BC6\u522B\u7684 Codex Desktop \u4F1A\u8BDD";
+    }
+  } catch {
+    state.configured = false;
+    state.supported = false;
+    state.error = "\u672A\u627E\u5230 Codex Desktop \u4F1A\u8BDD\u76EE\u5F55";
+  }
+  state.stale = isStale(state.last_event_at, now, options.staleAfterMs ?? DEFAULT_STALE_MS);
+  return publicHealth(state);
+}
+async function inspectNewestDesktopMetadata(sessionsRoot) {
+  const files = (await listJsonlFiles(sessionsRoot, import_promises6.readdir)).slice(-30).reverse();
+  for (const file of files) {
+    let text;
+    try {
+      text = (await readFileRange(file, 0, 2 * 1024 * 1024)).toString("utf8");
+    } catch {
+      continue;
+    }
+    for (const record of parseLines(text, true).records.slice(0, 80)) {
+      if (record?.type !== "session_meta") continue;
+      if (record.payload?.originator === "Codex Desktop") {
+        return { producer_version: stringValue4(record.payload?.cli_version) };
+      }
+      break;
+    }
+  }
+  return null;
+}
+async function readFileRange(file, position, length) {
+  if (length <= 0) return Buffer.alloc(0);
+  const handle = await (0, import_promises6.open)(file, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await handle.read(buffer, 0, length, position);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+async function readLastCodexEventAt(eventsRoot, captureSource) {
+  let names;
+  try {
+    names = (await (0, import_promises6.readdir)(eventsRoot)).filter((name) => name.endsWith(".jsonl")).sort().reverse();
+  } catch {
+    return null;
+  }
+  let latest = null;
+  for (const name of names) {
+    let text;
+    try {
+      text = await (0, import_promises6.readFile)(import_node_path8.default.join(eventsRoot, name), "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split(/\r?\n/)) {
+      try {
+        const item = JSON.parse(line);
+        if (captureSource && item.capture_source !== captureSource) continue;
+        if (typeof item.captured_at === "string") latest = maxIso(latest, item.captured_at);
+      } catch {
+      }
+    }
+    if (latest && !captureSource) break;
+  }
+  return latest;
+}
+function normalizeDesktopRecords(records, baseCheckpoint = {}, options = {}) {
+  const checkpoint = normalizeCheckpoint(baseCheckpoint);
+  const events = [];
+  let activeTurnId = checkpoint.active_turn_id || null;
+  let desktop = checkpoint.originator === "Codex Desktop";
+  let supported = desktop && supportedProducer(checkpoint.producer_version);
+  let error = null;
+  for (const record of records) {
+    if (!record || typeof record !== "object") continue;
+    if (record.type === "session_meta") {
+      const payload2 = record.payload || {};
+      checkpoint.session_id = stringValue4(payload2.id || payload2.session_id);
+      checkpoint.cwd = stringValue4(payload2.cwd);
+      checkpoint.originator = stringValue4(payload2.originator);
+      checkpoint.producer_version = stringValue4(payload2.cli_version);
+      checkpoint.is_subagent = Boolean(payload2.source?.subagent);
+      desktop = checkpoint.originator === "Codex Desktop";
+      supported = desktop && supportedProducer(checkpoint.producer_version);
+      if (desktop && !supported) error = `\u4E0D\u652F\u6301\u7684 Codex Desktop \u6570\u636E\u7248\u672C ${checkpoint.producer_version || "\u672A\u77E5"}`;
+      continue;
+    }
+    if (!desktop || !supported || checkpoint.is_subagent) continue;
+    if (!checkpoint.session_id) {
+      error = "\u4F1A\u8BDD\u7F3A\u5C11 session_meta.id";
+      continue;
+    }
+    const payload = record.payload || {};
+    if (record.type === "event_msg" && payload.type === "task_started") {
+      activeTurnId = stringValue4(payload.turn_id);
+      checkpoint.active_turn_id = activeTurnId;
+      continue;
+    }
+    if (record.type === "turn_context" && payload.turn_id) {
+      activeTurnId = stringValue4(payload.turn_id);
+      checkpoint.active_turn_id = activeTurnId;
+      if (payload.cwd) checkpoint.cwd = stringValue4(payload.cwd);
+      continue;
+    }
+    if (record.type !== "event_msg") continue;
+    const capturedAt = validIso(record.timestamp) || validIso(payload.completed_at) || null;
+    if (!capturedAt || options.bootstrapAfter && capturedAt <= options.bootstrapAfter) continue;
+    if (payload.type === "user_message") {
+      if (!activeTurnId) {
+        error = "\u7528\u6237\u6D88\u606F\u7F3A\u5C11\u53EF\u5173\u8054\u7684 turn_id";
+        continue;
+      }
+      const event = createEvent("UserPromptSubmit", capturedAt, checkpoint, activeTurnId, payload.message);
+      if (event) events.push(event);
+      continue;
+    }
+    if (payload.type === "task_complete" || payload.type === "turn_aborted") {
+      const turnId = stringValue4(payload.turn_id || activeTurnId);
+      if (!turnId) {
+        error = "\u5B8C\u6210\u4E8B\u4EF6\u7F3A\u5C11 turn_id";
+        continue;
+      }
+      const content = payload.type === "turn_aborted" ? "\u672C\u8F6E\u4EFB\u52A1\u5DF2\u4E2D\u6B62" : payload.last_agent_message;
+      const event = createEvent("Stop", capturedAt, checkpoint, turnId, content);
+      if (event) events.push(event);
+      if (turnId === activeTurnId) {
+        activeTurnId = null;
+        checkpoint.active_turn_id = null;
+      }
+    }
+  }
+  return { desktop, supported, error, checkpoint, events };
+}
+function createEvent(event, capturedAt, checkpoint, turnId, content) {
+  const safeContent = redactText(content).trim();
+  if (!safeContent) return null;
+  const record = {
+    schema_version: 1,
+    source: "codex",
+    capture_source: CAPTURE_SOURCE,
+    producer_version: checkpoint.producer_version,
+    event,
+    captured_at: capturedAt,
+    date: localDate(new Date(capturedAt)),
+    session_id: checkpoint.session_id,
+    turn_id: turnId,
+    cwd: checkpoint.cwd || void 0,
+    content: safeContent
+  };
+  record.event_id = `codex:${sha256(canonicalJson({
+    event: record.event,
+    session_id: record.session_id,
+    turn_id: record.turn_id,
+    cwd: record.cwd,
+    content: record.content
+  })).slice(0, 32)}`;
+  return record;
+}
+async function listJsonlFiles(root, readDirectory) {
+  const files = [];
+  async function visit(directory) {
+    const entries = await readDirectory(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const target = import_node_path8.default.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(target);
+      else if (entry.isFile() && entry.name.endsWith(".jsonl")) files.push(target);
+    }
+  }
+  await visit(root);
+  return files.sort();
+}
+async function readKnownEventIds(eventsRoot) {
+  const ids = /* @__PURE__ */ new Set();
+  let names;
+  try {
+    names = (await (0, import_promises6.readdir)(eventsRoot)).filter((name) => name.endsWith(".jsonl"));
+  } catch {
+    return ids;
+  }
+  for (const name of names) {
+    let text;
+    try {
+      text = await (0, import_promises6.readFile)(import_node_path8.default.join(eventsRoot, name), "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split(/\r?\n/)) {
+      try {
+        const item = JSON.parse(line);
+        if (item.event_id) ids.add(String(item.event_id));
+      } catch {
+      }
+    }
+  }
+  return ids;
+}
+function parseLines(text, allowTrailingPartial = false) {
+  const records = [];
+  const lines = text.split(/\r?\n/);
+  if (allowTrailingPartial && !/\r?\n$/.test(text)) lines.pop();
+  let invalid = 0;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      records.push(JSON.parse(line));
+    } catch {
+      invalid += 1;
+    }
+  }
+  return { records, invalid };
+}
+function supportedProducer(value) {
+  const match2 = String(value || "").match(/^(\d+)\.(\d+)\./);
+  if (!match2) return false;
+  const major = Number(match2[1]);
+  const minor = Number(match2[2]);
+  return major === 0 && VERIFIED_PRODUCER_MINORS.has(minor);
+}
+function normalizeState(value) {
+  return {
+    schema_version: STATE_SCHEMA,
+    source_type: SOURCE_TYPE,
+    configured: Boolean(value?.configured),
+    supported: Boolean(value?.supported),
+    last_seen_at: validIso(value?.last_seen_at),
+    last_event_at: validIso(value?.last_event_at),
+    last_sync_at: validIso(value?.last_sync_at),
+    stale: Boolean(value?.stale),
+    error: typeof value?.error === "string" ? value.error : null,
+    producer_versions: Array.isArray(value?.producer_versions) ? value.producer_versions.map(stringValue4).filter(Boolean) : [],
+    checkpoints: value?.checkpoints && typeof value.checkpoints === "object" ? value.checkpoints : {}
+  };
+}
+function normalizeCheckpoint(value) {
+  return {
+    offset: Math.max(0, Number(value?.offset || 0)),
+    size: Math.max(0, Number(value?.size || 0)),
+    mtime_ms: Math.max(0, Number(value?.mtime_ms || 0)),
+    session_id: stringValue4(value?.session_id),
+    cwd: stringValue4(value?.cwd),
+    originator: stringValue4(value?.originator),
+    producer_version: stringValue4(value?.producer_version),
+    is_subagent: Boolean(value?.is_subagent),
+    active_turn_id: stringValue4(value?.active_turn_id) || null
+  };
+}
+function failureHealth(state, now, error) {
+  return { ...state, configured: false, supported: false, last_sync_at: now.toISOString(), stale: true, error };
+}
+function result(state, accepted, duplicates, completedTurns) {
+  return { ...publicHealth(state), accepted, duplicates, completed_turns: completedTurns };
+}
+function publicHealth(state) {
+  return {
+    source_type: SOURCE_TYPE,
+    configured: Boolean(state.configured),
+    supported: Boolean(state.supported),
+    last_seen_at: state.last_seen_at || null,
+    last_event_at: state.last_event_at || null,
+    stale: Boolean(state.stale),
+    error: state.error || null,
+    producer_versions: state.producer_versions || []
+  };
+}
+function isStale(value, now, threshold) {
+  const parsed = value ? Date.parse(value) : Number.NaN;
+  return !Number.isFinite(parsed) || now.getTime() - parsed > threshold;
+}
+function validIso(value) {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return null;
+  return new Date(value).toISOString();
+}
+function maxIso(left, right) {
+  if (!left) return right || null;
+  if (!right) return left;
+  return Date.parse(right) > Date.parse(left) ? right : left;
+}
+function stringValue4(value) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 1e3) : "";
+}
+function safeError2(error) {
+  return String(error instanceof Error ? error.message : error).replace(/[\r\n]+/g, " ").slice(0, 300);
+}
+
+// ../runtime/src/knowledge-scheduler.mjs
+var import_node_path9 = __toESM(require("node:path"), 1);
+var import_promises7 = require("node:fs/promises");
+var STATE_SCHEMA2 = 1;
+var BASE_RETRY_MS = 5 * 6e4;
+var MAX_RETRY_MS = 6 * 60 * 6e4;
+var LEGACY_RUNNING_STALE_MS = 90 * 6e4;
+var ORPHAN_RUNNING_GRACE_MS = 2 * 6e4;
+var ABSOLUTE_RUNNING_STALE_MS = 6 * 60 * 6e4;
+async function readScheduleState(options) {
+  const target = schedulePath(options.vault);
+  const now = toDate2(options.now);
+  const state = normalizeState2(await readJson(target, null), now);
+  if (options.recoverStale === false) return state;
+  if (state.status !== "running" || !options.recoverInterrupted && !staleRunning(state, now)) return state;
+  const recovered = {
+    ...state,
+    status: "backoff",
+    next_due: new Date(now.getTime() + BASE_RETRY_MS).toISOString(),
+    error: "\u4E0A\u6B21\u6574\u7406\u8FDB\u7A0B\u5728\u8FD0\u884C\u4E2D\u4E2D\u65AD\uFF0C\u5C06\u81EA\u52A8\u91CD\u8BD5",
+    failure_count: Math.max(1, Number(state.failure_count || 0) + 1),
+    owner_pid: null
+  };
+  await atomicJson(target, recovered);
+  return recovered;
+}
+async function runDueKnowledgeCycle(options) {
+  const vault = import_node_path9.default.resolve(options.vault);
+  const now = toDate2(options.now);
+  let state = await readScheduleState({ vault, now, recoverInterrupted: options.recoverInterrupted });
+  const [lastCycle, queue] = await Promise.all([
+    readJson(import_node_path9.default.join(vault, "raw", "codex", "automation", "last-cycle.json"), null),
+    readJson(import_node_path9.default.join(vault, "raw", "codex", "ingest-status.json"), null)
+  ]);
+  const decision = evaluateSchedule({
+    now,
+    state,
+    lastCycle,
+    queue,
+    newActivity: options.newActivity,
+    executorReady: options.executorReady
+  });
+  if (!decision.due) {
+    state = await markScheduleIdle({ vault, state, now, nextDue: decision.next_due });
+    return { ran: false, ok: true, reason: decision.reason, state };
+  }
+  state = await beginScheduleAttempt({ vault, state, now, trigger: decision.reason });
+  try {
+    await options.run(decision.reason);
+    state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || /* @__PURE__ */ new Date(), ok: true });
+    return { ran: true, ok: true, reason: decision.reason, state };
+  } catch (error) {
+    state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || /* @__PURE__ */ new Date(), ok: false, error });
+    return { ran: true, ok: false, reason: decision.reason, state, error: safeError3(error) };
+  }
+}
+function evaluateSchedule(options) {
+  const now = toDate2(options.now);
+  const state = normalizeState2(options.state, now);
+  const lastSuccess = validIso2(state.last_success) || validIso2(options.lastCycle?.finished_at);
+  const readyTopics = Math.max(0, Number(options.queue?.ready_topics ?? options.queue?.candidate_topics ?? 0));
+  const hasWork = readyTopics > 0 || Boolean(options.newActivity);
+  if (!options.executorReady) return { due: false, reason: "executor-unavailable", next_due: futureDue(state.next_due, now) };
+  if (state.status === "running") return { due: false, reason: "already-running", next_due: state.next_due };
+  if (state.next_due && state.status === "backoff" && Date.parse(state.next_due) > now.getTime()) {
+    return { due: false, reason: "backoff", next_due: state.next_due };
+  }
+  if (!hasWork) return { due: false, reason: "queue-empty", next_due: nextDailyDue(now).toISOString() };
+  if (!lastSuccess) return { due: true, reason: options.newActivity ? "first-activity-catchup" : "first-startup-catchup", next_due: null };
+  const today = localDate(now);
+  const lastDate = localDate(new Date(lastSuccess));
+  if (lastDate < today) return { due: true, reason: "missed-day-catchup", next_due: null };
+  const dailyDue = dailyDueFor(now);
+  if (now.getTime() >= dailyDue.getTime()) return { due: true, reason: "daily-2330", next_due: null };
+  return { due: false, reason: "waiting-daily-time", next_due: dailyDue.toISOString() };
+}
+async function markScheduleIdle(options) {
+  const now = toDate2(options.now);
+  const state = normalizeState2(options.state, now);
+  const keepBackoff = state.status === "backoff" && Boolean(state.next_due && Date.parse(state.next_due) > now.getTime());
+  const nextDue = keepBackoff ? state.next_due : validIso2(options.nextDue) || nextDailyDue(now).toISOString();
+  const updated = { ...state, status: keepBackoff ? "backoff" : "idle", next_due: nextDue };
+  const target = schedulePath(options.vault);
+  if (JSON.stringify(updated) !== JSON.stringify(state) || !await exists(target)) await atomicJson(target, updated);
+  return updated;
+}
+async function beginScheduleAttempt(options) {
+  const now = toDate2(options.now);
+  const state = normalizeState2(options.state, now);
+  const updated = {
+    ...state,
+    last_attempt: now.toISOString(),
+    next_due: null,
+    status: "running",
+    error: null,
+    trigger: String(options.trigger || "automatic").slice(0, 80),
+    owner_pid: process.pid
+  };
+  await atomicJson(schedulePath(options.vault), updated);
+  return updated;
+}
+async function finishScheduleAttempt(options) {
+  const now = toDate2(options.now);
+  const state = normalizeState2(options.state, now);
+  if (options.ok) {
+    const updated2 = {
+      ...state,
+      last_attempt: state.last_attempt || now.toISOString(),
+      last_success: now.toISOString(),
+      next_due: nextDailyDue(now).toISOString(),
+      status: "succeeded",
+      error: null,
+      failure_count: 0,
+      owner_pid: null
+    };
+    await atomicJson(schedulePath(options.vault), updated2);
+    return updated2;
+  }
+  const failureCount = Math.max(1, Number(state.failure_count || 0) + 1);
+  const delay = Math.min(MAX_RETRY_MS, BASE_RETRY_MS * 2 ** Math.min(failureCount - 1, 8));
+  const updated = {
+    ...state,
+    last_attempt: state.last_attempt || now.toISOString(),
+    next_due: new Date(now.getTime() + delay).toISOString(),
+    status: "backoff",
+    error: safeError3(options.error),
+    failure_count: failureCount,
+    owner_pid: null
+  };
+  await atomicJson(schedulePath(options.vault), updated);
+  return updated;
+}
+function normalizeState2(value, now = /* @__PURE__ */ new Date()) {
+  return {
+    schema_version: STATE_SCHEMA2,
+    last_attempt: validIso2(value?.last_attempt),
+    last_success: validIso2(value?.last_success),
+    next_due: validIso2(value?.next_due) || nextDailyDue(toDate2(now)).toISOString(),
+    status: ["idle", "running", "succeeded", "backoff"].includes(value?.status) ? value.status : "idle",
+    error: typeof value?.error === "string" && value.error ? value.error.slice(0, 500) : null,
+    failure_count: Math.max(0, Number(value?.failure_count || 0)),
+    trigger: typeof value?.trigger === "string" ? value.trigger.slice(0, 80) : null,
+    owner_pid: Number.isInteger(value?.owner_pid) && value.owner_pid > 0 ? value.owner_pid : null
+  };
+}
+function schedulePath(vault) {
+  return import_node_path9.default.join(import_node_path9.default.resolve(vault), "raw", "codex", "automation", "schedule-state.json");
+}
+function dailyDueFor(now) {
+  const due = new Date(now);
+  due.setHours(23, 30, 0, 0);
+  return due;
+}
+function nextDailyDue(now) {
+  const due = dailyDueFor(now);
+  if (due.getTime() <= now.getTime()) due.setDate(due.getDate() + 1);
+  return due;
+}
+function futureDue(value, now) {
+  return value && Date.parse(value) > now.getTime() ? value : nextDailyDue(now).toISOString();
+}
+function staleRunning(state, now) {
+  if (state.status !== "running") return false;
+  const attempted = state.last_attempt ? Date.parse(state.last_attempt) : Number.NaN;
+  if (!Number.isFinite(attempted)) return true;
+  const age = now.getTime() - attempted;
+  if (age >= ABSOLUTE_RUNNING_STALE_MS) return true;
+  if (state.owner_pid) return age >= ORPHAN_RUNNING_GRACE_MS && !processAlive(state.owner_pid);
+  return age >= LEGACY_RUNNING_STALE_MS;
+}
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function toDate2(value) {
+  const date = value instanceof Date ? new Date(value) : new Date(value || Date.now());
+  return Number.isFinite(date.getTime()) ? date : /* @__PURE__ */ new Date();
+}
+function validIso2(value) {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return null;
+  return new Date(value).toISOString();
+}
+function safeError3(error) {
+  return String(error instanceof Error ? error.message : error || "\u6574\u7406\u5931\u8D25").replace(/[\r\n]+/g, " ").slice(0, 500);
+}
+async function exists(target) {
+  try {
+    await (0, import_promises7.stat)(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ../runtime/src/runtime-lock.mjs
+var import_node_crypto6 = require("node:crypto");
+var import_node_child_process3 = require("node:child_process");
+var import_promises8 = require("node:fs/promises");
+var import_node_path10 = __toESM(require("node:path"), 1);
+var import_node_util3 = require("node:util");
+var execFileAsync3 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
+var DEFAULT_LEASE_MS = 3 * 6e4;
+var DEFAULT_HEARTBEAT_MS = 3e4;
+var UNKNOWN_IDENTITY_GRACE_MS = 10 * 6e4;
+var SAME_PROCESS_MAX_STALE_MS = 24 * 60 * 6e4;
+var selfIdentityPromise;
+function runtimeLockPath(options) {
+  const name = safeName(options.name || "automation");
+  if (options.vault) return import_node_path10.default.join(import_node_path10.default.resolve(options.vault), "raw", "codex", "automation", "locks", `${name}.lock`);
+  return import_node_path10.default.join(import_node_path10.default.resolve(options.root), "runtime", "locks", `${name}.lock`);
+}
+async function acquireVaultAutomationLock(options) {
+  return acquireRuntimeLock({ ...options, name: "automation", lockPath: runtimeLockPath({ vault: options.vault, name: "automation" }) });
+}
+async function readVaultAutomationOwner(options) {
+  return readActiveOwner(runtimeLockPath({ vault: options.vault, name: "automation" }), options);
+}
+async function acquireRuntimeLock(options) {
+  const lockPath = import_node_path10.default.resolve(options.lockPath);
+  const leaseMs = positive(options.leaseMs, DEFAULT_LEASE_MS);
+  const heartbeatMs = positive(options.heartbeatMs, DEFAULT_HEARTBEAT_MS);
+  const now = nowDate(options.now);
+  const ownerId = (0, import_node_crypto6.randomUUID)();
+  const processIdentity = await identifyProcess(process.pid, options);
+  const owner = ownerRecord({ ownerId, ownerKind: options.ownerKind, now, leaseMs, processIdentity });
+  await (0, import_promises8.mkdir)(import_node_path10.default.dirname(lockPath), { recursive: true });
+  let recovered = false;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await (0, import_promises8.mkdir)(lockPath);
+      await atomicJson(import_node_path10.default.join(lockPath, "owner.json"), owner);
+      await atomicJson(heartbeatPath(lockPath, ownerId), heartbeatRecord(owner));
+      return acquiredLease({ lockPath, owner, recovered, heartbeatMs, leaseMs, now: options.now });
+    } catch (error) {
+      if (error?.code !== "EEXIST") throw error;
+      const existing = await readOwner(lockPath);
+      if (!existing && await newLockInProgress(lockPath, now, leaseMs)) {
+        return { acquired: false, recovered: false, owner: null, lock_path: lockPath };
+      }
+      if (!expired(existing, now)) return { acquired: false, recovered: false, owner: existing, lock_path: lockPath };
+      if (await sameLiveOwner(existing, now, options)) {
+        return { acquired: false, recovered: false, owner: existing, lock_path: lockPath };
+      }
+      const stalePath = `${lockPath}.stale-${ownerId}-${attempt}`;
+      try {
+        await (0, import_promises8.rename)(lockPath, stalePath);
+        await (0, import_promises8.rm)(stalePath, { recursive: true, force: true });
+        recovered = true;
+      } catch (renameError) {
+        if (!["ENOENT", "EEXIST", "EPERM", "EACCES"].includes(renameError?.code)) throw renameError;
+      }
+    }
+  }
+  return { acquired: false, recovered: false, owner: await readOwner(lockPath), lock_path: lockPath };
+}
+async function withLeaseHeartbeat(lease, work, options = {}) {
+  if (!lease.acquired) return work(lease);
+  const timer = setInterval(() => {
+    void lease.heartbeat().then((owned) => options.onHeartbeat?.(owned)).catch(() => options.onHeartbeat?.(false));
+  }, lease.heartbeat_ms);
+  timer.unref?.();
+  try {
+    return await work(lease);
+  } finally {
+    clearInterval(timer);
+    await lease.release();
+  }
+}
+function acquiredLease(options) {
+  return {
+    acquired: true,
+    recovered: options.recovered,
+    owner: options.owner,
+    lock_path: options.lockPath,
+    heartbeat_ms: options.heartbeatMs,
+    async heartbeat() {
+      const existing = await readOwner(options.lockPath);
+      if (existing?.owner_id !== options.owner.owner_id) return false;
+      const now = nowDate(options.now);
+      const updated = {
+        ...existing,
+        heartbeat_at: now.toISOString(),
+        lease_until: new Date(now.getTime() + options.leaseMs).toISOString()
+      };
+      await atomicJson(heartbeatPath(options.lockPath, options.owner.owner_id), heartbeatRecord(updated));
+      this.owner = updated;
+      return true;
+    },
+    async release() {
+      const existing = await readOwner(options.lockPath);
+      if (existing?.owner_id !== options.owner.owner_id) return false;
+      await (0, import_promises8.rm)(options.lockPath, { recursive: true, force: true });
+      return true;
+    }
+  };
+}
+async function readActiveOwner(lockPath, options) {
+  const owner = await readOwner(lockPath);
+  if (!owner) return null;
+  const now = nowDate(options.now);
+  return !expired(owner, now) || await sameLiveOwner(owner, now, options) ? owner : null;
+}
+async function readOwner(lockPath) {
+  try {
+    const owner = JSON.parse(await (0, import_promises8.readFile)(import_node_path10.default.join(lockPath, "owner.json"), "utf8"));
+    const heartbeat = await readHeartbeat(lockPath, owner.owner_id);
+    return heartbeat?.owner_id === owner.owner_id ? {
+      ...owner,
+      heartbeat_at: heartbeat.heartbeat_at,
+      lease_until: heartbeat.lease_until
+    } : owner;
+  } catch {
+    return null;
+  }
+}
+async function readHeartbeat(lockPath, ownerId) {
+  try {
+    return JSON.parse(await (0, import_promises8.readFile)(heartbeatPath(lockPath, ownerId), "utf8"));
+  } catch {
+    return null;
+  }
+}
+async function newLockInProgress(lockPath, now, leaseMs) {
+  try {
+    return now.getTime() - (await (0, import_promises8.stat)(lockPath)).mtimeMs < leaseMs;
+  } catch {
+    return false;
+  }
+}
+function heartbeatPath(lockPath, ownerId) {
+  return import_node_path10.default.join(lockPath, `heartbeat-${safeName(ownerId)}.json`);
+}
+function heartbeatRecord(owner) {
+  return { owner_id: owner.owner_id, heartbeat_at: owner.heartbeat_at, lease_until: owner.lease_until };
+}
+function ownerRecord(options) {
+  return {
+    schema_version: 1,
+    owner_id: options.ownerId,
+    owner_kind: String(options.ownerKind || "unknown").slice(0, 40),
+    pid: process.pid,
+    process_identity: options.processIdentity,
+    acquired_at: options.now.toISOString(),
+    heartbeat_at: options.now.toISOString(),
+    lease_until: new Date(options.now.getTime() + options.leaseMs).toISOString()
+  };
+}
+async function sameLiveOwner(owner, now, options) {
+  if (!Number.isInteger(owner?.pid) || owner.pid <= 0 || !processAlive2(owner.pid)) return false;
+  const heartbeatAt = Date.parse(owner.heartbeat_at || owner.acquired_at || "");
+  const age = Number.isFinite(heartbeatAt) ? Math.max(0, now.getTime() - heartbeatAt) : Number.POSITIVE_INFINITY;
+  const identity2 = await identifyProcess(owner.pid, options);
+  if (owner.process_identity && identity2) {
+    return owner.process_identity === identity2 && age < SAME_PROCESS_MAX_STALE_MS;
+  }
+  return age < UNKNOWN_IDENTITY_GRACE_MS;
+}
+async function identifyProcess(pid, options) {
+  if (options.processIdentity) return options.processIdentity(pid);
+  const platform = options.platform || process.platform;
+  if (pid === process.pid) {
+    selfIdentityPromise ||= queryProcessIdentity(pid, platform);
+    return selfIdentityPromise;
+  }
+  return queryProcessIdentity(pid, platform);
+}
+async function queryProcessIdentity(pid, platform) {
+  try {
+    if (platform === "linux") {
+      const value = await (0, import_promises8.readFile)(`/proc/${pid}/stat`, "utf8");
+      const fields = value.slice(value.lastIndexOf(")") + 2).trim().split(/\s+/);
+      return fields[19] ? `linux:${fields[19]}` : null;
+    }
+    if (platform === "darwin") {
+      const { stdout } = await execFileAsync3("/bin/ps", ["-o", "lstart=", "-p", String(pid)], { timeout: 2e3 });
+      return stdout.trim() ? `darwin:${stdout.trim()}` : null;
+    }
+    if (platform === "win32") {
+      const command = `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToUniversalTime().Ticks`;
+      const { stdout } = await execFileAsync3(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-Command", command],
+        { windowsHide: true, timeout: 3e3 }
+      );
+      return stdout.trim() ? `win32:${stdout.trim()}` : null;
+    }
+  } catch {
+  }
+  return null;
+}
+function processAlive2(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function expired(owner, now) {
+  const leaseUntil = Date.parse(owner?.lease_until || "");
+  return !Number.isFinite(leaseUntil) || leaseUntil <= now.getTime();
+}
+function nowDate(value) {
+  const result2 = typeof value === "function" ? value() : value;
+  const date = result2 instanceof Date ? new Date(result2) : new Date(result2 || Date.now());
+  return Number.isFinite(date.getTime()) ? date : /* @__PURE__ */ new Date();
+}
+function positive(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+function safeName(value) {
+  return String(value).replace(/[^a-z0-9-]/gi, "-").slice(0, 60) || "runtime";
+}
+
+// ../runtime/src/automation-owner.mjs
+async function runOwnedAutomationTick(options) {
+  const lease = await acquireVaultAutomationLock({
+    vault: options.vault,
+    ownerKind: options.ownerKind,
+    now: options.lockNow,
+    leaseMs: options.leaseMs,
+    heartbeatMs: options.heartbeatMs
+  });
+  if (!lease.acquired) return busyResult(lease);
+  await options.onAcquired?.(lease.owner);
+  return withLeaseHeartbeat(lease, async () => {
+    const capture = options.syncDesktop ? await options.syncDesktop({ vault: options.vault, codexHome: options.codexHome, now: options.now }) : await syncCodexDesktop({ vault: options.vault, codexHome: options.codexHome, now: options.now });
+    const scheduled = await runDueKnowledgeCycle({
+      vault: options.vault,
+      now: options.now,
+      finishedAt: options.finishedAt,
+      newActivity: Number(capture?.completed_turns || 0) > 0,
+      executorReady: Boolean(options.executorReady),
+      recoverInterrupted: lease.recovered,
+      run: options.runKnowledge
+    });
+    return { acquired: true, owner: lease.owner, capture, ...scheduled };
+  }, { onHeartbeat: options.onHeartbeat });
+}
+async function runOwnedManualKnowledge(options) {
+  const lease = await acquireVaultAutomationLock({
+    vault: options.vault,
+    ownerKind: options.ownerKind || "manual",
+    now: options.lockNow,
+    leaseMs: options.leaseMs,
+    heartbeatMs: options.heartbeatMs
+  });
+  if (!lease.acquired) return { ...busyResult(lease), ok: false };
+  await options.onAcquired?.(lease.owner);
+  return withLeaseHeartbeat(lease, async () => {
+    let state = await readScheduleState({ vault: options.vault, now: options.now, recoverInterrupted: lease.recovered });
+    state = await beginScheduleAttempt({ vault: options.vault, state, now: options.now, trigger: "manual" });
+    try {
+      await options.runKnowledge("manual");
+      state = await finishScheduleAttempt({ vault: options.vault, state, now: options.finishedAt || /* @__PURE__ */ new Date(), ok: true });
+      return { acquired: true, ran: true, ok: true, reason: "manual", state };
+    } catch (error) {
+      state = await finishScheduleAttempt({ vault: options.vault, state, now: options.finishedAt || /* @__PURE__ */ new Date(), ok: false, error });
+      return {
+        acquired: true,
+        ran: true,
+        ok: false,
+        reason: "manual",
+        state,
+        error: String(error instanceof Error ? error.message : error || "\u6574\u7406\u5931\u8D25")
+      };
+    }
+  }, { onHeartbeat: options.onHeartbeat });
+}
+function busyResult(lease) {
+  return {
+    acquired: false,
+    ran: false,
+    ok: true,
+    reason: "owner-busy",
+    owner: lease.owner,
+    error: ownerMessage(lease.owner)
+  };
+}
+function ownerMessage(owner) {
+  if (owner?.owner_kind === "background") return "\u540E\u53F0\u6B63\u5728\u5904\u7406\u91C7\u96C6\u6216\u6574\u7406\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
+  if (owner?.owner_kind === "obsidian") return "Obsidian \u6B63\u5728\u5904\u7406\u91C7\u96C6\u6216\u6574\u7406\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
+  return "\u77E5\u884C\u53F0\u6B63\u5728\u5904\u7406\u91C7\u96C6\u6216\u6574\u7406\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5";
+}
+
+// ../runtime/src/source-health.mjs
+var import_node_path11 = __toESM(require("node:path"), 1);
+var DEFAULT_STALE_MS2 = 36 * 60 * 6e4;
+async function readCodexCliHookHealth(options) {
+  const now = toDate3(options.now);
+  const configured = countHookEvents(options.hooks) === 2;
+  const supported = configured && Boolean(options.codexExecutable);
+  const lastEventAt = options.vault ? await readLastCodexEventAt(import_node_path11.default.join(import_node_path11.default.resolve(options.vault), "raw", "codex", "events"), "codex_cli_hook") : null;
+  return {
+    source_type: "codex_cli_hook_v1",
+    configured,
+    supported,
+    last_seen_at: options.codexExecutable ? now.toISOString() : null,
+    last_event_at: lastEventAt,
+    stale: isStale2(lastEventAt, now, options.staleAfterMs ?? DEFAULT_STALE_MS2),
+    error: !configured ? "\u672A\u914D\u7F6E Codex CLI Hook" : !options.codexExecutable ? "Codex CLI \u672A\u901A\u8FC7\u7248\u672C\u63A2\u6D3B" : null
+  };
+}
+function countHookEvents(config) {
+  const hooks = config?.hooks && typeof config.hooks === "object" ? config.hooks : {};
+  return ["UserPromptSubmit", "Stop"].filter((eventName) => {
+    const entries = Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
+    return entries.some((entry) => Array.isArray(entry?.hooks) && entry.hooks.some((hook) => typeof hook?.command === "string" && /(?:^|[\\/])capture-hook\.mjs(?:["'\s]|$)/i.test(hook.command)));
+  }).length;
+}
+function isStale2(value, now, threshold) {
+  const parsed = value ? Date.parse(value) : Number.NaN;
+  return !Number.isFinite(parsed) || now.getTime() - parsed > threshold;
+}
+function toDate3(value) {
+  const result2 = value instanceof Date ? new Date(value) : new Date(value || Date.now());
+  return Number.isFinite(result2.getTime()) ? result2 : /* @__PURE__ */ new Date();
 }
 
 // src/suite-service.ts
-var execFileAsync3 = (0, import_node_util3.promisify)(import_node_child_process3.execFile);
+var execFileAsync4 = (0, import_node_util4.promisify)(import_node_child_process4.execFile);
 var RECEIVER_PORT = 43123;
 var RELEASE_API = "https://api.github.com/repos/ZhiweiXiao98/zhixing-workbench/releases/latest";
 var SuiteService = class {
@@ -7458,6 +8622,17 @@ var SuiteService = class {
       receiverMessage: "\u6B63\u5728\u542F\u52A8\u672C\u673A\u63A5\u6536\u5668",
       runtime: "unavailable",
       codex: "unavailable",
+      web: emptyFactualHealth("chatgpt_web_receiver_v1"),
+      capture: {
+        cliHook: emptyFactualHealth("codex_cli_hook_v1"),
+        desktop: emptyFactualHealth("codex_desktop_sessions_v1")
+      },
+      organizer: {
+        runtime: emptyFactualHealth("knowledge_runtime_v1"),
+        executor: emptyFactualHealth("codex_exec_v1")
+      },
+      schedulerHost: emptyFactualHealth("background_scheduler_v1"),
+      schedule: emptyScheduleState(),
       update: "unchecked",
       running: false,
       feishu: emptyFeishuHealth()
@@ -7475,14 +8650,15 @@ var SuiteService = class {
   feishuDeviceCode = "";
   codexExecutable;
   larkExecutable;
+  scheduledWork;
   async start() {
     const device = await this.ensureDeviceConfig();
     this.token = device.receiver_token;
     await this.findProgramRoot();
     await this.startReceiver();
     await this.refreshHealth();
-    this.scheduleTimer = window.setInterval(() => void this.runScheduledWork(), 30 * 6e4);
-    window.setTimeout(() => void this.runScheduledWork(), 3e4);
+    this.scheduleTimer = window.setInterval(() => void this.runScheduledWork(), 6e4);
+    window.setTimeout(() => void this.runScheduledWork(), 5e3);
   }
   async stop() {
     window.clearInterval(this.scheduleTimer);
@@ -7505,9 +8681,9 @@ var SuiteService = class {
     new import_obsidian5.Notice("\u672C\u673A\u63A5\u6536\u5BC6\u94A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u7C98\u8D34\u5230\u6D4F\u89C8\u5668\u6269\u5C55");
   }
   async openBrowserExtensionFolder() {
-    const install = await readJson(import_node_path7.default.join(configRoot(), "install.json"), null);
-    const target = typeof install?.browser_extension_root === "string" ? install.browser_extension_root : import_node_path7.default.join(configRoot(), "browser-extension");
-    const manifest = await readJson(import_node_path7.default.join(target, "manifest.json"), null);
+    const install = await readJson2(import_node_path12.default.join(configRoot(), "install.json"), null);
+    const target = typeof install?.browser_extension_root === "string" ? install.browser_extension_root : import_node_path12.default.join(configRoot(), "browser-extension");
+    const manifest = await readJson2(import_node_path12.default.join(target, "manifest.json"), null);
     if (!manifest?.version) {
       new import_obsidian5.Notice("\u6D4F\u89C8\u5668\u6269\u5C55\u5C1A\u672A\u5B89\u88C5\uFF0C\u8BF7\u5148\u91CD\u65B0\u8FD0\u884C\u77E5\u884C\u53F0\u5B89\u88C5\u5668");
       return;
@@ -7535,41 +8711,113 @@ var SuiteService = class {
     }
   }
   async runKnowledgeNow() {
-    if (!this.programRoot || this.health.running) return;
-    this.setHealth({ running: true });
-    const runner = import_node_path7.default.join(this.programRoot, "runtime", "run-cycle.mjs");
-    try {
-      await this.runFeishuSyncNow(false);
-      await execFileAsync3(process.execPath, [runner, "--vault", this.vaultBasePath(), "--trigger", "manual"], {
-        env: {
-          ...process.env,
-          ELECTRON_RUN_AS_NODE: "1",
-          ZHIXING_CAPTURE_DISABLED: "1",
-          ...this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}
-        },
-        timeout: 6 * 60 * 6e4,
-        windowsHide: true,
-        maxBuffer: 8 * 1024 * 1024
-      });
-      new import_obsidian5.Notice("\u77E5\u884C\u53F0\u6574\u7406\u5B8C\u6210\uFF0C\u53EF\u5728\u201C\u6574\u7406\u8BB0\u5F55\u201D\u67E5\u770B\u7ED3\u679C");
-    } catch (error) {
-      console.error("Zhixing knowledge cycle failed", error);
-      new import_obsidian5.Notice("\u77E5\u884C\u53F0\u6574\u7406\u672A\u5B8C\u6210\uFF0C\u5185\u5BB9\u5DF2\u4FDD\u7559\u5728\u961F\u5217\u4E2D\u7B49\u5F85\u91CD\u8BD5");
-    } finally {
-      this.setHealth({ running: false });
-      await this.refreshHealth();
+    if (!this.programRoot || !this.health.organizer.executor.supported || this.health.running) {
+      if (!this.health.running) new import_obsidian5.Notice("\u77E5\u8BC6\u6574\u7406\u6267\u884C\u5668\u5C1A\u672A\u5C31\u7EEA\uFF0C\u8BF7\u5728\u72B6\u6001\u63D0\u793A\u4E2D\u67E5\u770B\u539F\u56E0");
+      return;
     }
+    const vault = this.vaultBasePath();
+    const runner = import_node_path12.default.join(this.programRoot, "runtime", "run-cycle.mjs");
+    const result2 = await runOwnedManualKnowledge({
+      vault,
+      ownerKind: "manual",
+      onAcquired: async () => this.setHealth({ running: true }),
+      runKnowledge: async () => {
+        await this.runFeishuSyncNow(false);
+        await execFileAsync4(process.execPath, [runner, "--vault", vault, "--trigger", "manual"], {
+          env: {
+            ...process.env,
+            ELECTRON_RUN_AS_NODE: "1",
+            ZHIXING_CAPTURE_DISABLED: "1",
+            ...this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}
+          },
+          timeout: 6 * 60 * 6e4,
+          windowsHide: true,
+          maxBuffer: 8 * 1024 * 1024
+        });
+      }
+    });
+    if (result2.reason === "owner-busy") {
+      new import_obsidian5.Notice(result2.error || "\u77E5\u884C\u53F0\u6B63\u5728\u5904\u7406\u91C7\u96C6\u6216\u6574\u7406\uFF0C\u8BF7\u7A0D\u540E\u518D\u8BD5");
+    } else if (result2.ok) {
+      new import_obsidian5.Notice("\u77E5\u884C\u53F0\u6574\u7406\u5B8C\u6210\uFF0C\u53EF\u5728\u201C\u6574\u7406\u8BB0\u5F55\u201D\u67E5\u770B\u7ED3\u679C");
+    } else {
+      console.error("Zhixing knowledge cycle failed", result2.error);
+      new import_obsidian5.Notice("\u77E5\u884C\u53F0\u6574\u7406\u672A\u5B8C\u6210\uFF0C\u5185\u5BB9\u5DF2\u4FDD\u7559\u5728\u961F\u5217\u4E2D\u7B49\u5F85\u91CD\u8BD5");
+    }
+    this.setHealth({ running: false, ...result2.state ? { schedule: result2.state } : {} });
+    await this.refreshHealth();
   }
   async refreshHealth() {
     await this.findProgramRoot();
     const [codex, lark] = await Promise.all([discoverExecutable("codex"), discoverExecutable("lark-cli")]);
     this.codexExecutable = codex?.path;
     this.larkExecutable = lark?.path;
-    const lastCycle = await readJson(import_node_path7.default.join(this.vaultBasePath(), "raw", "codex", "automation", "last-cycle.json"), null);
+    const vault = this.vaultBasePath();
+    const codexHome = codexHomePath();
+    const [lastCycle, schedule, hooks, desktop, executor, webLastEvent, installState, backgroundState, automationOwner] = await Promise.all([
+      readJson2(import_node_path12.default.join(vault, "raw", "codex", "automation", "last-cycle.json"), null),
+      readScheduleState({ vault, recoverStale: false }),
+      readJson2(import_node_path12.default.join(codexHome, "hooks.json"), {}),
+      readCodexDesktopHealth({ vault, codexHome }),
+      probeCodexExecutor(codex?.path),
+      readLastCodexEventAt(import_node_path12.default.join(vault, "raw", "chatgpt", "events")),
+      readJson2(import_node_path12.default.join(configRoot(), "install.json"), null),
+      readJson2(import_node_path12.default.join(vault, "raw", "codex", "automation", "background-state.json"), null),
+      readVaultAutomationOwner({ vault })
+    ]);
+    const cliHook = await readCodexCliHookHealth({ vault, hooks, codexExecutable: codex?.path });
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const runtimeHealth = {
+      source_type: "knowledge_runtime_v1",
+      configured: Boolean(this.programRoot),
+      supported: Boolean(this.programRoot),
+      last_seen_at: this.programRoot ? now : null,
+      last_event_at: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : null,
+      stale: false,
+      error: this.programRoot ? null : "\u77E5\u884C\u53F0\u77E5\u8BC6\u8FD0\u884C\u65F6\u7F3A\u5931"
+    };
+    const executorHealth = {
+      source_type: "codex_exec_v1",
+      configured: Boolean(codex),
+      supported: Boolean(codex && executor.supported),
+      last_seen_at: codex && executor.supported ? now : null,
+      last_event_at: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : null,
+      stale: false,
+      error: executor.error
+    };
+    const web = {
+      source_type: "chatgpt_web_receiver_v1",
+      configured: Boolean(this.token),
+      supported: this.health.receiver === "ready",
+      last_seen_at: this.health.receiver === "ready" ? now : null,
+      last_event_at: webLastEvent,
+      stale: staleSince(webLastEvent),
+      error: this.health.receiver === "ready" ? null : this.health.receiverMessage
+    };
+    const schedulerConfigured = Boolean(installState?.background_scheduler?.installed && !installState?.background_scheduler?.conflict);
+    const backgroundOwnsAutomation = automationOwner?.owner_kind === "background";
+    const schedulerRecent = backgroundOwnsAutomation || Boolean(backgroundState?.last_seen_at && Date.now() - Date.parse(backgroundState.last_seen_at) <= 3 * 6e4);
+    const processing = Boolean(automationOwner);
+    const schedulerHost = {
+      source_type: "background_scheduler_v1",
+      configured: schedulerConfigured,
+      supported: schedulerConfigured && schedulerRecent && backgroundState?.supported === true,
+      last_seen_at: typeof backgroundState?.last_seen_at === "string" ? backgroundState.last_seen_at : null,
+      last_event_at: typeof backgroundState?.last_event_at === "string" ? backgroundState.last_event_at : null,
+      stale: !schedulerRecent && !processing,
+      phase: processing ? "processing" : backgroundState?.phase === "error" ? "error" : backgroundState?.phase === "waiting" ? "waiting" : "idle",
+      owner_kind: automationOwner?.owner_kind || backgroundState?.owner_kind || null,
+      error: processing ? null : installState?.background_scheduler?.error || backgroundState?.error || (schedulerConfigured && !schedulerRecent ? "\u540E\u53F0\u8C03\u5EA6\u7B49\u5F85\u672C\u6B21\u767B\u5F55\u542F\u52A8\u6216\u5FC3\u8DF3\u5DF2\u4E2D\u65AD" : schedulerConfigured ? null : "\u540E\u53F0\u8C03\u5EA6\u5C1A\u672A\u6CE8\u518C")
+    };
     const feishu = await this.readFeishuHealth();
     this.setHealth({
       runtime: this.programRoot ? "ready" : "unavailable",
-      codex: this.codexExecutable ? "ready" : "unavailable",
+      codex: executorHealth.supported ? "ready" : "unavailable",
+      web,
+      capture: { cliHook, desktop },
+      organizer: { runtime: runtimeHealth, executor: executorHealth },
+      schedulerHost,
+      schedule,
       lastCycle: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : void 0,
       feishu
     });
@@ -7593,14 +8841,14 @@ var SuiteService = class {
   async beginFeishuAuthorization(config) {
     const scopes = feishuScopes(config);
     if (scopes.length === 0) throw new Error("\u8BF7\u5148\u9009\u62E9\u81F3\u5C11\u4E00\u4E2A\u98DE\u4E66\u6A21\u5757");
-    const result = await executeLarkCli(["auth", "login", "--scope", scopes.join(" "), "--no-wait", "--json"], {
+    const result2 = await executeLarkCli(["auth", "login", "--scope", scopes.join(" "), "--no-wait", "--json"], {
       timeout: 3e4,
       windowsHide: true,
       maxBuffer: 2 * 1024 * 1024,
       env: larkCliEnv()
     }, this.larkExecutable);
-    const payload = parseCommandJson(`${result.stdout}
-${result.stderr}`);
+    const payload = parseCommandJson(`${result2.stdout}
+${result2.stderr}`);
     const verificationUrl = String(payload.verification_url || payload.data?.verification_url || "");
     const deviceCode = String(payload.device_code || payload.data?.device_code || "");
     if (!verificationUrl || !deviceCode) throw new Error("\u98DE\u4E66\u6CA1\u6709\u8FD4\u56DE\u53EF\u7528\u7684\u6388\u6743\u5730\u5740");
@@ -7623,10 +8871,10 @@ ${result.stderr}`);
     if (!this.programRoot || this.health.feishu.syncing) return;
     const config = await this.getFeishuConfig();
     if (!config.enabled) return;
-    const runner = import_node_path7.default.join(this.programRoot, "runtime", "feishu-cli.mjs");
+    const runner = import_node_path12.default.join(this.programRoot, "runtime", "feishu-cli.mjs");
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "\u6B63\u5728\u540C\u6B65\u98DE\u4E66" } });
     try {
-      await execFileAsync3(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
+      await execFileAsync4(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: "1",
@@ -7700,17 +8948,17 @@ ${result.stderr}`);
     }
     try {
       const body = await requestJson(request);
-      const result = await this.persistEvents(Array.isArray(body.events) ? body.events.slice(0, 100) : []);
-      sendJson(response, 200, { ok: true, ...result });
+      const result2 = await this.persistEvents(Array.isArray(body.events) ? body.events.slice(0, 100) : []);
+      sendJson(response, 200, { ok: true, ...result2 });
     } catch (error) {
       sendJson(response, 400, { ok: false, error: String(error).slice(0, 120) });
     }
   }
   async persistEvents(events) {
-    const date = localDate();
+    const date = localDate2();
     const target = `raw/chatgpt/events/${date}.jsonl`;
-    const exists = await this.app.vault.adapter.exists(target);
-    const current = exists ? await this.app.vault.adapter.read(target) : "";
+    const exists2 = await this.app.vault.adapter.exists(target);
+    const current = exists2 ? await this.app.vault.adapter.read(target) : "";
     const known = new Set(current.split(/\r?\n/).flatMap((line) => {
       try {
         const value = JSON.parse(line);
@@ -7754,25 +9002,25 @@ ${result.stderr}`);
   }
   async ensureDeviceConfig() {
     const root = configRoot();
-    const target = import_node_path7.default.join(root, "device.json");
-    const existing = await readJson(target, null);
+    const target = import_node_path12.default.join(root, "device.json");
+    const existing = await readJson2(target, null);
     if (existing?.receiver_token && String(existing.receiver_token).length >= 24) return existing;
     const created = {
       schema_version: 1,
-      device_id: (0, import_node_crypto5.randomBytes)(16).toString("hex"),
+      device_id: (0, import_node_crypto7.randomBytes)(16).toString("hex"),
       receiver_port: RECEIVER_PORT,
-      receiver_token: (0, import_node_crypto5.randomBytes)(32).toString("base64url"),
+      receiver_token: (0, import_node_crypto7.randomBytes)(32).toString("base64url"),
       created_at: (/* @__PURE__ */ new Date()).toISOString()
     };
-    await atomicJson(target, created);
+    await atomicJson2(target, created);
     return created;
   }
   async findProgramRoot() {
-    const install = await readJson(import_node_path7.default.join(configRoot(), "install.json"), null);
+    const install = await readJson2(import_node_path12.default.join(configRoot(), "install.json"), null);
     if (typeof install?.program_root === "string") {
-      const runner = import_node_path7.default.join(install.program_root, "runtime", "run-cycle.mjs");
+      const runner = import_node_path12.default.join(install.program_root, "runtime", "run-cycle.mjs");
       try {
-        await (0, import_promises5.readFile)(runner, "utf8");
+        await (0, import_promises9.readFile)(runner, "utf8");
         this.programRoot = install.program_root;
         return;
       } catch {
@@ -7781,8 +9029,54 @@ ${result.stderr}`);
     this.programRoot = void 0;
   }
   async runScheduledWork() {
+    if (this.scheduledWork) return this.scheduledWork;
+    this.scheduledWork = this.performScheduledWork();
+    try {
+      await this.scheduledWork;
+    } finally {
+      this.scheduledWork = void 0;
+    }
+  }
+  async performScheduledWork() {
+    const vault = this.vaultBasePath();
     await this.runFeishuIfDue();
-    await this.runMissedCycle();
+    await this.refreshHealth();
+    if (this.health.schedulerHost.supported) return;
+    if (!this.programRoot || this.health.running) return;
+    const result2 = await runOwnedAutomationTick({
+      vault,
+      codexHome: codexHomePath(),
+      ownerKind: "obsidian",
+      executorReady: this.health.organizer.runtime.supported && this.health.organizer.executor.supported,
+      runKnowledge: async () => {
+        if (!this.programRoot) throw new Error("\u77E5\u884C\u53F0\u77E5\u8BC6\u8FD0\u884C\u65F6\u7F3A\u5931");
+        this.setHealth({ running: true });
+        try {
+          await execFileAsync4(process.execPath, [
+            import_node_path12.default.join(this.programRoot, "runtime", "run-cycle.mjs"),
+            "--vault",
+            vault,
+            "--trigger",
+            "automatic"
+          ], {
+            env: {
+              ...process.env,
+              ELECTRON_RUN_AS_NODE: "1",
+              ZHIXING_CAPTURE_DISABLED: "1",
+              ...this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}
+            },
+            timeout: 6 * 60 * 6e4,
+            windowsHide: true,
+            maxBuffer: 8 * 1024 * 1024
+          });
+        } finally {
+          this.setHealth({ running: false });
+        }
+      }
+    });
+    if (result2.state) this.setHealth({ schedule: result2.state });
+    if (result2.ran && !result2.ok) console.error("Zhixing automatic knowledge cycle failed", result2.error);
+    await this.refreshHealth();
   }
   async runFeishuIfDue() {
     const config = await this.getFeishuConfig();
@@ -7794,7 +9088,7 @@ ${result.stderr}`);
   async readFeishuHealth() {
     const config = await this.getFeishuConfig();
     const cli = Boolean(this.larkExecutable);
-    const state = await readJson(import_node_path7.default.join(this.vaultBasePath(), "raw", "feishu", "sync-state.json"), {});
+    const state = await readJson2(import_node_path12.default.join(this.vaultBasePath(), "raw", "feishu", "sync-state.json"), {});
     const enabledModules = Object.entries(config.modules).filter(([, enabled]) => enabled).map(([key]) => key);
     const pending = config.enabled ? await countPendingFeishu(this.vaultBasePath()) : 0;
     if (!config.enabled) {
@@ -7807,8 +9101,10 @@ ${result.stderr}`);
       };
     }
     const failedModules = Number(state.failed_modules || 0);
-    const status = !cli || !this.programRoot ? "unavailable" : failedModules > 0 || state.status === "failed" ? "attention" : "ready";
-    const message2 = !cli ? "\u672A\u627E\u5230 lark-cli" : !this.programRoot ? "\u77E5\u884C\u53F0\u8FD0\u884C\u65F6\u7F3A\u5931" : failedModules > 0 ? `${failedModules} \u4E2A\u6A21\u5757\u7B49\u5F85\u91CD\u8BD5` : state.last_success ? "\u98DE\u4E66\u53EA\u8BFB\u540C\u6B65\u6B63\u5E38" : "\u7B49\u5F85\u9996\u6B21\u540C\u6B65";
+    const lastSuccess = typeof state.last_success === "string" ? state.last_success : void 0;
+    const stale = staleSince(lastSuccess || null);
+    const status = !cli || !this.programRoot ? "unavailable" : failedModules > 0 || state.status === "failed" || !lastSuccess || stale ? "attention" : "ready";
+    const message2 = !cli ? "\u672A\u627E\u5230 lark-cli" : !this.programRoot ? "\u77E5\u884C\u53F0\u8FD0\u884C\u65F6\u7F3A\u5931" : failedModules > 0 ? `${failedModules} \u4E2A\u6A21\u5757\u7B49\u5F85\u91CD\u8BD5` : !lastSuccess ? "\u7B49\u5F85\u9996\u6B21\u540C\u6B65" : stale ? "\u98DE\u4E66\u5DF2\u4E45\u672A\u540C\u6B65" : "\u98DE\u4E66\u53EA\u8BFB\u540C\u6B65\u6B63\u5E38";
     return {
       status,
       enabled: true,
@@ -7817,23 +9113,19 @@ ${result.stderr}`);
       enabledModules,
       selectedChats: config.selected_chats.length,
       selectedBases: config.selected_bases.length,
-      lastSync: typeof state.last_success === "string" ? state.last_success : void 0,
+      lastSync: lastSuccess,
       pending,
       failedModules,
       retryAt: typeof state.retry_at === "string" ? state.retry_at : void 0,
       message: message2,
-      syncing: this.health.feishu.syncing
+      syncing: this.health.feishu.syncing,
+      configured: true,
+      supported: cli && Boolean(this.programRoot),
+      lastSeenAt: typeof state.last_attempt === "string" ? state.last_attempt : void 0,
+      lastEventAt: lastSuccess,
+      stale,
+      error: typeof state.error === "string" ? state.error : failedModules > 0 ? `${failedModules} \u4E2A\u6A21\u5757\u540C\u6B65\u5931\u8D25` : void 0
     };
-  }
-  async runMissedCycle() {
-    if (!this.programRoot || this.health.running) return;
-    const now = /* @__PURE__ */ new Date();
-    const lastDate = this.health.lastCycle ? localDate(new Date(this.health.lastCycle)) : "";
-    const today = localDate(now);
-    const reachedDailyTime = now.getHours() > 23 || now.getHours() === 23 && now.getMinutes() >= 30;
-    const missedEarlierDay = Boolean(lastDate && lastDate < today);
-    if (!missedEarlierDay && (!reachedDailyTime || lastDate === today)) return;
-    await this.runKnowledgeNow();
   }
   vaultBasePath() {
     const adapter = this.app.vault.adapter;
@@ -7846,26 +9138,26 @@ ${result.stderr}`);
   }
 };
 function configRoot() {
-  if (process.env.ZHIXING_CONFIG) return import_node_path7.default.resolve(process.env.ZHIXING_CONFIG);
-  if (process.platform === "win32") return import_node_path7.default.join(process.env.APPDATA || import_node_path7.default.join((0, import_node_os3.homedir)(), "AppData", "Roaming"), "ZhixingWorkbench");
-  if (process.platform === "darwin") return import_node_path7.default.join((0, import_node_os3.homedir)(), "Library", "Application Support", "ZhixingWorkbench");
-  return import_node_path7.default.join(process.env.XDG_CONFIG_HOME || import_node_path7.default.join((0, import_node_os3.homedir)(), ".config"), "zhixing-workbench");
+  if (process.env.ZHIXING_CONFIG) return import_node_path12.default.resolve(process.env.ZHIXING_CONFIG);
+  if (process.platform === "win32") return import_node_path12.default.join(process.env.APPDATA || import_node_path12.default.join((0, import_node_os5.homedir)(), "AppData", "Roaming"), "ZhixingWorkbench");
+  if (process.platform === "darwin") return import_node_path12.default.join((0, import_node_os5.homedir)(), "Library", "Application Support", "ZhixingWorkbench");
+  return import_node_path12.default.join(process.env.XDG_CONFIG_HOME || import_node_path12.default.join((0, import_node_os5.homedir)(), ".config"), "zhixing-workbench");
 }
-async function readJson(target, fallback) {
+async function readJson2(target, fallback) {
   try {
-    return JSON.parse(await (0, import_promises5.readFile)(target, "utf8"));
+    return JSON.parse(await (0, import_promises9.readFile)(target, "utf8"));
   } catch {
     return fallback;
   }
 }
-async function atomicJson(target, value) {
-  await (0, import_promises5.mkdir)(import_node_path7.default.dirname(target), { recursive: true });
+async function atomicJson2(target, value) {
+  await (0, import_promises9.mkdir)(import_node_path12.default.dirname(target), { recursive: true });
   const temporary = `${target}.${process.pid}.tmp`;
-  await (0, import_promises5.writeFile)(temporary, `${JSON.stringify(value, null, 2)}
+  await (0, import_promises9.writeFile)(temporary, `${JSON.stringify(value, null, 2)}
 `, "utf8");
-  await (0, import_promises5.rename)(temporary, target);
+  await (0, import_promises9.rename)(temporary, target);
 }
-function localDate(value = /* @__PURE__ */ new Date()) {
+function localDate2(value = /* @__PURE__ */ new Date()) {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
@@ -7875,7 +9167,7 @@ function secureEqual(value, expected) {
   if (typeof value !== "string") return false;
   const left = Buffer.from(value);
   const right = Buffer.from(expected);
-  return left.length === right.length && (0, import_node_crypto5.timingSafeEqual)(left, right);
+  return left.length === right.length && (0, import_node_crypto7.timingSafeEqual)(left, right);
 }
 function validEvent(value) {
   const item = value;
@@ -7895,7 +9187,7 @@ function normalizeEvent(event, date) {
     title: redact(event.title || "\u672A\u547D\u540D\u5BF9\u8BDD").slice(0, 300),
     url: /^https:\/\/(chatgpt\.com|chat\.openai\.com)\//.test(event.url || "") ? event.url || "" : "",
     content: redact(event.content).trim(),
-    event_id: `chatgpt:${(0, import_node_crypto5.createHash)("sha256").update(stable).digest("hex").slice(0, 32)}`
+    event_id: `chatgpt:${(0, import_node_crypto7.createHash)("sha256").update(stable).digest("hex").slice(0, 32)}`
   };
 }
 function redact(value) {
@@ -7949,8 +9241,42 @@ function emptyFeishuHealth() {
     pending: 0,
     failedModules: 0,
     message: "\u98DE\u4E66\u8FDE\u63A5\u5668\u672A\u5F00\u542F",
-    syncing: false
+    syncing: false,
+    configured: false,
+    supported: false,
+    stale: false
   };
+}
+function emptyFactualHealth(sourceType) {
+  return {
+    source_type: sourceType,
+    configured: false,
+    supported: false,
+    last_seen_at: null,
+    last_event_at: null,
+    stale: true,
+    error: null
+  };
+}
+function emptyScheduleState() {
+  return {
+    schema_version: 1,
+    last_attempt: null,
+    last_success: null,
+    next_due: null,
+    status: "idle",
+    error: null,
+    failure_count: 0,
+    trigger: null,
+    owner_pid: null
+  };
+}
+function staleSince(value, threshold = 36 * 60 * 6e4) {
+  const parsed = value ? Date.parse(value) : Number.NaN;
+  return !Number.isFinite(parsed) || Date.now() - parsed > threshold;
+}
+function codexHomePath() {
+  return import_node_path12.default.resolve(process.env.CODEX_HOME || import_node_path12.default.join((0, import_node_os5.homedir)(), ".codex"));
 }
 function normalizeFeishuConfig(value) {
   const keys = Object.keys(FEISHU_SCOPE_MAP);
@@ -7963,7 +9289,7 @@ function normalizeFeishuConfig(value) {
     sync_interval_minutes: Math.min(1440, Math.max(15, Number(value?.sync_interval_minutes || 60))),
     modules,
     selected_chats: chats.map((item) => ({
-      selection_key: safeIdentifier(item?.selection_key || item?.chat_id) || (0, import_node_crypto5.createHash)("sha256").update(String(item?.query || "")).digest("hex").slice(0, 20),
+      selection_key: safeIdentifier(item?.selection_key || item?.chat_id) || (0, import_node_crypto7.createHash)("sha256").update(String(item?.query || "")).digest("hex").slice(0, 20),
       chat_id: safeIdentifier(item?.chat_id),
       query: safeDisplay(item?.query || ""),
       label: safeDisplay(item?.label || "\u5DF2\u9009\u9879\u76EE\u7FA4"),
@@ -7993,18 +9319,18 @@ function parseCommandJson(value) {
 }
 async function countPendingFeishu(vault) {
   const processed = /* @__PURE__ */ new Set();
-  const ingest = await readJson(import_node_path7.default.join(vault, "raw", "codex", "ingest-state.json"), {});
+  const ingest = await readJson2(import_node_path12.default.join(vault, "raw", "codex", "ingest-state.json"), {});
   for (const id of Array.isArray(ingest.processed_event_ids) ? ingest.processed_event_ids : []) processed.add(String(id));
-  const directory = import_node_path7.default.join(vault, "raw", "feishu", "events");
+  const directory = import_node_path12.default.join(vault, "raw", "feishu", "events");
   let names = [];
   try {
-    names = (await (0, import_promises5.readdir)(directory)).filter((name) => name.endsWith(".jsonl")).sort().slice(-45);
+    names = (await (0, import_promises9.readdir)(directory)).filter((name) => name.endsWith(".jsonl")).sort().slice(-45);
   } catch {
     return 0;
   }
   let pending = 0;
   for (const name of names) {
-    const lines = (await (0, import_promises5.readFile)(import_node_path7.default.join(directory, name), "utf8")).split(/\r?\n/);
+    const lines = (await (0, import_promises9.readFile)(import_node_path12.default.join(directory, name), "utf8")).split(/\r?\n/);
     for (const line of lines) {
       try {
         const item = JSON.parse(line);
@@ -8030,8 +9356,8 @@ function larkCliEnv() {
 async function executeLarkCli(args, options, located) {
   const executable = located || (await discoverExecutable("lark-cli"))?.path;
   if (!executable) throw new Error("\u672A\u627E\u5230\u5B98\u65B9 lark-cli\uFF0C\u8BF7\u91CD\u65B0\u5B89\u88C5\u6700\u65B0\u7248 @larksuite/cli");
-  const result = await execFileAsync3(executable, args, options);
-  return { stdout: String(result.stdout || ""), stderr: String(result.stderr || "") };
+  const result2 = await execFileAsync4(executable, args, options);
+  return { stdout: String(result2.stdout || ""), stderr: String(result2.stderr || "") };
 }
 
 // src/main.ts
@@ -8104,8 +9430,8 @@ var ActivityLedgerPlugin = class extends import_obsidian6.Plugin {
   async setGraphDenoise(mode, notify) {
     const graphPath = `${this.app.vault.configDir}/graph.json`;
     try {
-      const exists = await this.app.vault.adapter.exists(graphPath);
-      const current = exists ? await this.app.vault.adapter.read(graphPath) : "{}";
+      const exists2 = await this.app.vault.adapter.exists(graphPath);
+      const current = exists2 ? await this.app.vault.adapter.read(graphPath) : "{}";
       const updated = updateGraphConfigText(current, mode);
       if (!updated.ok) {
         throw new Error(updated.error ?? "\u65E0\u6CD5\u66F4\u65B0\u5173\u7CFB\u56FE\u914D\u7F6E");
