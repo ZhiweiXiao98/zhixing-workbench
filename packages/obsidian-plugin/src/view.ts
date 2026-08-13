@@ -32,6 +32,7 @@ import type {
 } from "./core/types";
 import type { ActivityService } from "./activity-service";
 import type { SuiteHealth, SuiteService } from "./suite-service";
+import { canRunKnowledgeNow, factualHealthDisplay, scheduleHealthLabel } from "./health-view-model";
 import { FeishuSetupModal } from "./feishu-settings";
 
 export const ACTIVITY_LEDGER_VIEW_TYPE = "activity-ledger-view";
@@ -321,7 +322,7 @@ export class ActivityLedgerView extends ItemView {
     const schedule = toolbar.createDiv({ cls: "activity-ingest-schedule" });
     const scheduleIcon = schedule.createSpan();
     setIcon(scheduleIcon, "clock-3");
-    schedule.createSpan({ text: "每天 23:30 自动整理" });
+    schedule.createSpan({ text: this.suiteHealth ? scheduleHealthLabel(this.suiteHealth, formatDateTime) : "等待调度状态" });
     toolbar.createSpan({
       cls: "activity-artifact-range-summary",
       text: queue
@@ -360,22 +361,27 @@ export class ActivityLedgerView extends ItemView {
     if (!health) return;
     const panel = parent.createDiv({ cls: "zhixing-suite-health" });
     panel.createSpan({ cls: "zhixing-suite-version", text: `v${health.version}` });
-    const receiver = panel.createSpan({ cls: `zhixing-health-chip is-${health.receiver}` });
-    setIcon(receiver, health.receiver === "ready" ? "radio-tower" : "triangle-alert");
-    receiver.createSpan({ text: health.receiver === "ready" ? "网页采集正常" : "网页采集异常" });
-    receiver.setAttribute("title", health.receiverMessage);
-    const runtime = panel.createSpan({ cls: `zhixing-health-chip is-${health.runtime}` });
-    setIcon(runtime, health.runtime === "ready" ? "brain-circuit" : "circle-dashed");
-    runtime.createSpan({ text: health.runtime === "ready" ? "知识整理就绪" : "知识运行时缺失" });
-    const codex = panel.createSpan({ cls: `zhixing-health-chip is-${health.codex}` });
-    setIcon(codex, health.codex === "ready" ? "terminal" : "circle-dashed");
-    codex.createSpan({ text: health.codex === "ready" ? "Codex 就绪" : "Codex 未连接" });
+    this.renderFactualHealthChip(panel, health.capture.desktop, "monitor-dot", {
+      ready: "桌面采集正常", waiting: "桌面采集等待事件", stale: "桌面采集已久未更新", unavailable: "桌面采集异常"
+    });
+    this.renderFactualHealthChip(panel, health.capture.cliHook, "terminal", {
+      ready: "CLI 采集正常", waiting: "CLI Hook 等待事件", stale: "CLI 采集已久未更新", unavailable: "CLI 采集未就绪"
+    });
+    this.renderFactualHealthChip(panel, health.web, "radio-tower", {
+      ready: "网页采集正常", waiting: "网页采集等待事件", stale: "网页采集已久未更新", unavailable: "网页采集异常"
+    });
+    this.renderFactualHealthChip(panel, health.organizer.runtime.supported ? health.organizer.executor : health.organizer.runtime, "brain-circuit", {
+      ready: "知识整理就绪", waiting: "知识整理等待首轮", stale: "知识整理已久未运行", unavailable: "知识整理不可用"
+    });
     const feishu = panel.createSpan({ cls: `zhixing-health-chip is-${health.feishu.status === "ready" ? "ready" : health.feishu.status === "disabled" ? "starting" : "unavailable"}` });
     setIcon(feishu, health.feishu.status === "ready" ? "message-square-check" : health.feishu.status === "disabled" ? "message-square-dashed" : "message-square-warning");
     feishu.createSpan({ text: health.feishu.status === "ready" ? `飞书正常${health.feishu.pending ? ` · 待整理 ${health.feishu.pending}` : ""}` :
-      health.feishu.status === "disabled" ? "飞书未连接" : health.feishu.failedModules ? `飞书待重试 ${health.feishu.failedModules}` : "飞书不可用" });
+      health.feishu.status === "disabled" ? "飞书未连接" : health.feishu.status === "unavailable" ? "飞书不可用" :
+        health.feishu.failedModules ? `飞书待重试 ${health.feishu.failedModules}` : !health.feishu.lastSync ? "飞书等待首次同步" : "飞书已久未同步" });
     feishu.setAttribute("title", [health.feishu.message, health.feishu.identityLabel,
+      health.feishu.lastSeenAt ? `最后探活 ${formatDateTime(health.feishu.lastSeenAt)}` : "",
       health.feishu.lastSync ? `最后同步 ${formatDateTime(health.feishu.lastSync)}` : "",
+      health.feishu.error,
       health.feishu.selectedChats ? `${health.feishu.selectedChats} 个项目群` : "",
       health.feishu.selectedBases ? `${health.feishu.selectedBases} 个 Base 视图` : ""].filter(Boolean).join(" · "));
     const updateLabel = health.update === "available" ? `可更新 ${health.latestVersion}` : health.update === "current" ? "已是最新版" : "检查更新";
@@ -384,7 +390,7 @@ export class ActivityLedgerView extends ItemView {
     const extension = this.iconButton(panel, "folder-open", "打开浏览器扩展目录", "open-browser-extension-folder");
     extension.addEventListener("click", () => void this.suite.openBrowserExtensionFolder());
     const run = this.iconButton(panel, health.running ? "loader-circle" : "sparkles", health.running ? "正在整理" : "立即整理", "run-knowledge-now");
-    run.disabled = health.runtime !== "ready" || health.codex !== "ready" || health.running;
+    run.disabled = !canRunKnowledgeNow(health);
     run.addEventListener("click", () => void this.suite.runKnowledgeNow());
     const sources = this.iconButton(panel, "database", "数据来源设置", "open-data-sources");
     sources.addEventListener("click", () => new FeishuSetupModal(this.app, this.suite).open());
@@ -395,6 +401,15 @@ export class ActivityLedgerView extends ItemView {
     }
     const update = this.iconTextButton(panel, "cloud-download", updateLabel, "check-suite-update");
     update.addEventListener("click", () => void this.suite.checkForUpdate());
+  }
+
+  private renderFactualHealthChip(parent: HTMLElement, health: SuiteHealth["web"], icon: string,
+    labels: { ready: string; waiting: string; stale: string; unavailable: string }): void {
+    const display = factualHealthDisplay(health, labels);
+    const chip = parent.createSpan({ cls: `zhixing-health-chip is-${display.state}` });
+    setIcon(chip, display.state === "unavailable" ? "triangle-alert" : icon);
+    chip.createSpan({ text: display.label });
+    chip.setAttribute("title", display.title);
   }
 
   private renderIngestRunRow(parent: HTMLElement, run: KnowledgeIngestRun): void {

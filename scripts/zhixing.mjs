@@ -19,7 +19,8 @@ try {
   ensureNode();
   let result;
   if (command === "install") {
-    result = await installSuite({ sourceRoot, vault: args.vault, skipHooks: args["skip-hooks"] });
+    result = await installSuite({ sourceRoot, vault: args.vault, skipHooks: args["skip-hooks"],
+      launchBackground: process.env.ZHIXING_BACKGROUND_LAUNCH_DISABLED !== "1" });
   } else if (command === "diagnose") {
     result = await diagnoseSuite({ vault: args.vault });
   } else if (command === "uninstall") {

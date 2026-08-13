@@ -5,7 +5,12 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { configRoot, readJson } from "../packages/runtime/src/common.mjs";
-import { discoverExecutable } from "../packages/runtime/src/executable-discovery.mjs";
+import { discoverExecutable, probeCodexExecutor } from "../packages/runtime/src/executable-discovery.mjs";
+import { readCodexDesktopHealth, readLastCodexEventAt } from "../packages/runtime/src/codex-desktop-source.mjs";
+import { readScheduleState } from "../packages/runtime/src/knowledge-scheduler.mjs";
+import { readCodexCliHookHealth } from "../packages/runtime/src/source-health.mjs";
+import { inspectBackgroundSchedulerRegistration, launchBackgroundScheduler, registerBackgroundScheduler,
+  removeBackgroundScheduler } from "../packages/runtime/src/background-registration.mjs";
 
 const execFileAsync = promisify(execFile);
 const SKILL_MARKER = ".zhixing-owner.json";
@@ -17,7 +22,7 @@ const LEGACY_TASK_NAMES = [
   "Codex - Obsidian Daily Ingest"
 ];
 
-export const VERSION = "0.6.2";
+export const VERSION = "0.6.3";
 export const OWNED_SKILLS = ["obsidian-knowledge", "investigate-work-history", "zhixing-manager"];
 
 export async function installSuite(options = {}) {
@@ -45,6 +50,7 @@ export async function installSuite(options = {}) {
   let browserChange;
   let skillChange;
   let legacyChange;
+  let backgroundChange;
   try {
     legacyChange = await migrateLegacyInstallation({
       vault, root, codexHome, previousInstall,
@@ -68,6 +74,15 @@ export async function installSuite(options = {}) {
     skillChange = await installSkills(sourceRoot, codexHome, root, previousInstall);
     if (options.faultStage === "after-skills-replace") throw new Error("测试注入：Skill 替换后失败");
     if (!options.skipHooks) await installHooks(codexHome, programRoot);
+    backgroundChange = await registerBackgroundScheduler({
+      platform: options.configOptions?.platform || process.platform,
+      home: options.configOptions?.home || homedir(),
+      env: options.configOptions?.env || process.env,
+      nodePath: process.execPath,
+      programRoot,
+      configRoot: root,
+      previousState: previousInstall?.background_scheduler
+    });
     const install = {
       schema_version: 2,
       version: VERSION,
@@ -79,13 +94,25 @@ export async function installSuite(options = {}) {
       browser_extension_root: browserChange.target,
       browser_extension_sha256: await hashDirectory(browserChange.target),
       receiver_port: device.receiver_port,
-      components: ["obsidian-plugin", "codex-skills", "codex-hooks", "browser-extension", "knowledge-runtime", "feishu-connector"],
+      components: ["obsidian-plugin", "codex-skills", "codex-hooks", "browser-extension", "knowledge-runtime", "background-scheduler", "feishu-connector"],
       skills: skillChange.skills,
-      legacy_migration: legacyChange.state
+      legacy_migration: legacyChange.state,
+      background_scheduler: backgroundChange.state
     };
     await atomicJson(path.join(root, "install.json"), install);
+    let backgroundLaunch = null;
+    if (options.launchBackground && backgroundChange.state.installed) {
+      try {
+        backgroundLaunch = (options.backgroundLauncher || launchBackgroundScheduler)({
+          nodePath: process.execPath, programRoot, configRoot: root
+        });
+      } catch (error) {
+        backgroundLaunch = { started: false, error: safeCommandError(error) };
+      }
+    }
     await skillChange.commit().catch(() => undefined);
     await browserChange.commit().catch(() => undefined);
+    await backgroundChange.commit().catch(() => undefined);
     await rm(pluginBackup, { recursive: true, force: true }).catch(() => undefined);
     if (programBackup) await rm(programBackup, { recursive: true, force: true }).catch(() => undefined);
     return {
@@ -96,6 +123,8 @@ export async function installSuite(options = {}) {
       program: programRoot,
       browser_extension: browserChange.target,
       hooks: options.skipHooks ? "skipped" : "installed",
+      background_scheduler: backgroundChange.state,
+      background_launch: backgroundLaunch,
       previous_version: previousInstall?.version || null,
       skill_conflicts: skillChange.conflicts,
       legacy_migration: legacyChange.state || { migrated: false }
@@ -103,6 +132,7 @@ export async function installSuite(options = {}) {
   } catch (error) {
     await skillChange?.rollback().catch(() => undefined);
     await browserChange?.rollback().catch(() => undefined);
+    await backgroundChange?.rollback().catch(() => undefined);
     await rm(pluginStage, { recursive: true, force: true });
     if (pluginReplaced) {
       await rm(pluginTarget, { recursive: true, force: true });
@@ -132,6 +162,21 @@ export async function diagnoseSuite(options = {}) {
   const browserManifest = await readJson(path.join(browserRoot, "manifest.json"), null);
   const codex = await discoverExecutable("codex", options.discoveryOptions);
   const lark = await discoverExecutable("lark-cli", options.discoveryOptions);
+  const runtimeReady = Boolean(install?.program_root && await exists(path.join(install.program_root, "runtime", "run-cycle.mjs")));
+  const [executor, desktop, cliHook, schedule, webLastEvent, receiver] = await Promise.all([
+    probeCodexExecutor(codex?.path, options.discoveryOptions),
+    vault ? readCodexDesktopHealth({ vault, codexHome }) : null,
+    readCodexCliHookHealth({ vault, hooks, codexExecutable: codex?.path }),
+    vault ? readScheduleState({ vault, recoverStale: false }) : null,
+    vault ? readLastCodexEventAt(path.join(vault, "raw", "chatgpt", "events")) : null,
+    probeBrowserReceiver(root, options.fetch)
+  ]);
+  const backgroundRegistration = await inspectBackgroundSchedulerRegistration(install?.background_scheduler);
+  const backgroundState = vault ? await readJson(path.join(vault, "raw", "codex", "automation", "background-state.json"), null) : null;
+  const backgroundRecent = Boolean(backgroundState?.last_seen_at && Date.now() - Date.parse(backgroundState.last_seen_at) <= 3 * 60_000);
+  const now = new Date().toISOString();
+  const feishuEnabled = Boolean(feishuConfig?.enabled);
+  const feishuSupported = feishuEnabled && Boolean(lark && runtimeReady);
   return {
     version: install?.version || null,
     platform: `${process.platform}-${process.arch}`,
@@ -139,18 +184,63 @@ export async function diagnoseSuite(options = {}) {
     vault: vault && await exists(vault) ? "ready" : "missing",
     obsidian_plugin: vault && await exists(path.join(vault, ".obsidian", "plugins", PLUGIN_ID, "main.js")) ? "ready" : "missing",
     legacy_plugin: vault && await exists(path.join(vault, ".obsidian", "plugins", LEGACY_PLUGIN_ID)) ? "active" : "inactive",
-    knowledge_runtime: install?.program_root && await exists(path.join(install.program_root, "runtime", "run-cycle.mjs")) ? "ready" : "missing",
+    knowledge_runtime: runtimeReady ? "ready" : "missing",
+    knowledge_runtime_health: {
+      configured: runtimeReady,
+      supported: runtimeReady,
+      last_seen_at: runtimeReady ? now : null,
+      last_event_at: schedule?.last_success || null,
+      stale: false,
+      error: runtimeReady ? null : "知识运行时缺失"
+    },
+    knowledge_executor: {
+      configured: Boolean(codex),
+      supported: Boolean(codex && executor.supported),
+      last_seen_at: codex && executor.supported ? now : null,
+      last_event_at: schedule?.last_success || null,
+      stale: false,
+      error: executor.error
+    },
     browser_extension: browserManifest?.version === install?.version ? "ready" : browserManifest ? "version-mismatch" : "missing",
     browser_extension_path: browserRoot,
     browser_extension_version: browserManifest?.version || null,
-    codex_hooks: countOwnedHooks(hooks) >= 2 ? "ready" : "missing",
+    codex_hooks: cliHook.configured ? "configured" : "missing",
+    codex_cli_hook: cliHook,
+    codex_desktop: desktop,
     codex_cli: codex ? "ready" : "missing",
     codex_cli_path: codex?.path || null,
     codex_cli_source: codex?.source || null,
+    codex_cli_version: codex?.version || null,
     lark_cli: lark ? "ready" : "missing",
     lark_cli_path: lark?.path || null,
     lark_cli_source: lark?.source || null,
-    feishu_connector: !feishuConfig?.enabled ? "disabled" : feishuState?.status || "waiting-first-sync",
+    browser_receiver: {
+      configured: receiver.configured,
+      supported: receiver.supported,
+      last_seen_at: receiver.supported ? now : null,
+      last_event_at: webLastEvent,
+      stale: staleSince(webLastEvent),
+      error: receiver.error
+    },
+    knowledge_schedule: schedule,
+    background_scheduler: {
+      configured: backgroundRegistration.configured,
+      supported: backgroundRegistration.configured && backgroundRecent && backgroundState?.supported === true,
+      last_seen_at: backgroundState?.last_seen_at || null,
+      last_event_at: backgroundState?.last_event_at || null,
+      stale: !backgroundRecent,
+      error: backgroundRegistration.error || backgroundState?.error ||
+        (backgroundRegistration.configured && !backgroundRecent ? "后台调度尚未运行或心跳已中断" : null)
+    },
+    feishu_connector: !feishuEnabled ? "disabled" : feishuState?.status || "waiting-first-sync",
+    feishu_health: {
+      configured: feishuEnabled,
+      supported: feishuSupported,
+      last_seen_at: feishuState?.last_attempt || null,
+      last_event_at: feishuState?.last_success || null,
+      stale: feishuEnabled ? staleSince(feishuState?.last_success || null) : false,
+      error: !feishuEnabled ? null : !lark ? "lark-cli 未通过版本探活" : !runtimeReady ? "知识运行时缺失" : feishuState?.error || null
+    },
     feishu_last_sync: feishuState?.last_success || null,
     feishu_failed_modules: Number(feishuState?.failed_modules || 0)
   };
@@ -163,6 +253,7 @@ export async function uninstallSuite(options = {}) {
   if (!install) return { ok: true, status: "not-installed", skill_conflicts: [] };
   const vault = path.resolve(options.vault || install.vault_root);
   const codexHome = path.resolve(options.codexHome || process.env.CODEX_HOME || path.join(homedir(), ".codex"));
+  const background = await removeBackgroundScheduler(install.background_scheduler);
   await rm(path.join(vault, ".obsidian", "plugins", PLUGIN_ID), { recursive: true, force: true });
   await removeHooks(codexHome);
   const skillResult = await uninstallSkills(codexHome, install.skills || []);
@@ -180,6 +271,8 @@ export async function uninstallSuite(options = {}) {
     status: "uninstalled",
     skill_conflicts: skillResult.conflicts,
     legacy_hook_conflicts: legacy.hook_conflicts,
+    background_scheduler_removed: background.removed,
+    background_scheduler_conflict: background.conflict,
     legacy_restored: legacy.restored,
     data_preserved: ["raw", "wiki", "成果", "AGENTS.md", ".zhixing/feishu-connector.json", "device.json"]
   };
@@ -713,6 +806,30 @@ async function atomicJson(target, value) {
 
 async function writeIfMissing(target, content) {
   if (!await exists(target)) await writeFile(target, content, "utf8");
+}
+
+async function probeBrowserReceiver(root, fetchOverride) {
+  const device = await readJson(path.join(root, "device.json"), null);
+  if (!device?.receiver_token || !device?.receiver_port) {
+    return { configured: false, supported: false, error: "本机接收器尚未配置" };
+  }
+  try {
+    const request = fetchOverride || globalThis.fetch;
+    const response = await request(`http://127.0.0.1:${Number(device.receiver_port)}/health`, {
+      headers: { "X-Obsidian-Capture-Token": String(device.receiver_token) },
+      signal: AbortSignal.timeout(2_000)
+    });
+    return response.ok ? { configured: true, supported: true, error: null }
+      : { configured: true, supported: false, error: `本机接收器返回 HTTP ${response.status}` };
+  } catch (error) {
+    return { configured: true, supported: false,
+      error: `本机接收器未通过探活：${String(error instanceof Error ? error.message : error).replace(/[\r\n]+/g, " ").slice(0, 180)}` };
+  }
+}
+
+function staleSince(value, threshold = 36 * 60 * 60_000) {
+  const parsed = value ? Date.parse(value) : Number.NaN;
+  return !Number.isFinite(parsed) || Date.now() - parsed > threshold;
 }
 
 async function assertDirectory(target, message) {

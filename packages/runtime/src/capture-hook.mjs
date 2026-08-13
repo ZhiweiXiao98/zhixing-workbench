@@ -34,6 +34,7 @@ try {
   const record = {
     schema_version: 1,
     source: "codex",
+    capture_source: "codex_cli_hook",
     event: eventName,
     captured_at: capturedAt,
     date: localDate(),

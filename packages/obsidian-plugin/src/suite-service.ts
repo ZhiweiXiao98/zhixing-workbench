@@ -7,7 +7,12 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { Notice, requestUrl, type App } from "obsidian";
 import { shell } from "electron";
-import { discoverExecutable } from "../../runtime/src/executable-discovery.mjs";
+import { discoverExecutable, probeCodexExecutor } from "../../runtime/src/executable-discovery.mjs";
+import { readCodexDesktopHealth, readLastCodexEventAt } from "../../runtime/src/codex-desktop-source.mjs";
+import { runOwnedAutomationTick, runOwnedManualKnowledge } from "../../runtime/src/automation-owner.mjs";
+import { readScheduleState, type KnowledgeScheduleState } from "../../runtime/src/knowledge-scheduler.mjs";
+import { readVaultAutomationOwner } from "../../runtime/src/runtime-lock.mjs";
+import { readCodexCliHookHealth } from "../../runtime/src/source-health.mjs";
 
 const execFileAsync = promisify(execFile);
 const RECEIVER_PORT = 43123;
@@ -19,11 +24,28 @@ export interface SuiteHealth {
   receiverMessage: string;
   runtime: "ready" | "unavailable";
   codex: "ready" | "unavailable";
+  web: FactualHealth;
+  capture: { cliHook: FactualHealth; desktop: FactualHealth };
+  organizer: { runtime: FactualHealth; executor: FactualHealth };
+  schedulerHost: FactualHealth;
+  schedule: KnowledgeScheduleState;
   update: "current" | "available" | "unchecked" | "error";
   latestVersion?: string;
   lastCycle?: string;
   running: boolean;
   feishu: FeishuHealth;
+}
+
+export interface FactualHealth {
+  source_type: string;
+  configured: boolean;
+  supported: boolean;
+  last_seen_at: string | null;
+  last_event_at: string | null;
+  stale: boolean;
+  error: string | null;
+  phase?: "idle" | "processing" | "waiting" | "error";
+  owner_kind?: string | null;
 }
 
 export interface FeishuHealth {
@@ -40,6 +62,12 @@ export interface FeishuHealth {
   retryAt?: string;
   message: string;
   syncing: boolean;
+  configured: boolean;
+  supported: boolean;
+  lastSeenAt?: string;
+  lastEventAt?: string;
+  stale: boolean;
+  error?: string;
 }
 
 export interface FeishuConnectorConfig {
@@ -103,6 +131,7 @@ export class SuiteService {
   private feishuDeviceCode = "";
   private codexExecutable?: string;
   private larkExecutable?: string;
+  private scheduledWork?: Promise<void>;
 
   constructor(private readonly app: App, private readonly version: string) {
     this.health = {
@@ -111,6 +140,17 @@ export class SuiteService {
       receiverMessage: "正在启动本机接收器",
       runtime: "unavailable",
       codex: "unavailable",
+      web: emptyFactualHealth("chatgpt_web_receiver_v1"),
+      capture: {
+        cliHook: emptyFactualHealth("codex_cli_hook_v1"),
+        desktop: emptyFactualHealth("codex_desktop_sessions_v1")
+      },
+      organizer: {
+        runtime: emptyFactualHealth("knowledge_runtime_v1"),
+        executor: emptyFactualHealth("codex_exec_v1")
+      },
+      schedulerHost: emptyFactualHealth("background_scheduler_v1"),
+      schedule: emptyScheduleState(),
       update: "unchecked",
       running: false,
       feishu: emptyFeishuHealth()
@@ -123,8 +163,8 @@ export class SuiteService {
     await this.findProgramRoot();
     await this.startReceiver();
     await this.refreshHealth();
-    this.scheduleTimer = window.setInterval(() => void this.runScheduledWork(), 30 * 60_000);
-    window.setTimeout(() => void this.runScheduledWork(), 30_000);
+    this.scheduleTimer = window.setInterval(() => void this.runScheduledWork(), 60_000);
+    window.setTimeout(() => void this.runScheduledWork(), 5_000);
   }
 
   async stop(): Promise<void> {
@@ -185,26 +225,37 @@ export class SuiteService {
   }
 
   async runKnowledgeNow(): Promise<void> {
-    if (!this.programRoot || this.health.running) return;
-    this.setHealth({ running: true });
-    const runner = path.join(this.programRoot, "runtime", "run-cycle.mjs");
-    try {
-      await this.runFeishuSyncNow(false);
-      await execFileAsync(process.execPath, [runner, "--vault", this.vaultBasePath(), "--trigger", "manual"], {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
-          ...(this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}) },
-        timeout: 6 * 60 * 60_000,
-        windowsHide: true,
-        maxBuffer: 8 * 1024 * 1024
-      });
-      new Notice("知行台整理完成，可在“整理记录”查看结果");
-    } catch (error) {
-      console.error("Zhixing knowledge cycle failed", error);
-      new Notice("知行台整理未完成，内容已保留在队列中等待重试");
-    } finally {
-      this.setHealth({ running: false });
-      await this.refreshHealth();
+    if (!this.programRoot || !this.health.organizer.executor.supported || this.health.running) {
+      if (!this.health.running) new Notice("知识整理执行器尚未就绪，请在状态提示中查看原因");
+      return;
     }
+    const vault = this.vaultBasePath();
+    const runner = path.join(this.programRoot, "runtime", "run-cycle.mjs");
+    const result = await runOwnedManualKnowledge({
+      vault,
+      ownerKind: "manual",
+      onAcquired: async () => this.setHealth({ running: true }),
+      runKnowledge: async () => {
+        await this.runFeishuSyncNow(false);
+        await execFileAsync(process.execPath, [runner, "--vault", vault, "--trigger", "manual"], {
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+            ...(this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}) },
+          timeout: 6 * 60 * 60_000,
+          windowsHide: true,
+          maxBuffer: 8 * 1024 * 1024
+        });
+      }
+    });
+    if (result.reason === "owner-busy") {
+      new Notice(result.error || "知行台正在处理采集或整理，请稍后再试");
+    } else if (result.ok) {
+      new Notice("知行台整理完成，可在“整理记录”查看结果");
+    } else {
+      console.error("Zhixing knowledge cycle failed", result.error);
+      new Notice("知行台整理未完成，内容已保留在队列中等待重试");
+    }
+    this.setHealth({ running: false, ...(result.state ? { schedule: result.state } : {}) });
+    await this.refreshHealth();
   }
 
   async refreshHealth(): Promise<void> {
@@ -212,11 +263,76 @@ export class SuiteService {
     const [codex, lark] = await Promise.all([discoverExecutable("codex"), discoverExecutable("lark-cli")]);
     this.codexExecutable = codex?.path;
     this.larkExecutable = lark?.path;
-    const lastCycle = await readJson(path.join(this.vaultBasePath(), "raw", "codex", "automation", "last-cycle.json"), null);
+    const vault = this.vaultBasePath();
+    const codexHome = codexHomePath();
+    const [lastCycle, schedule, hooks, desktop, executor, webLastEvent, installState, backgroundState, automationOwner] = await Promise.all([
+      readJson(path.join(vault, "raw", "codex", "automation", "last-cycle.json"), null),
+      readScheduleState({ vault, recoverStale: false }),
+      readJson(path.join(codexHome, "hooks.json"), {}),
+      readCodexDesktopHealth({ vault, codexHome }),
+      probeCodexExecutor(codex?.path),
+      readLastCodexEventAt(path.join(vault, "raw", "chatgpt", "events")),
+      readJson(path.join(configRoot(), "install.json"), null),
+      readJson(path.join(vault, "raw", "codex", "automation", "background-state.json"), null),
+      readVaultAutomationOwner({ vault })
+    ]);
+    const cliHook = await readCodexCliHookHealth({ vault, hooks, codexExecutable: codex?.path });
+    const now = new Date().toISOString();
+    const runtimeHealth: FactualHealth = {
+      source_type: "knowledge_runtime_v1",
+      configured: Boolean(this.programRoot),
+      supported: Boolean(this.programRoot),
+      last_seen_at: this.programRoot ? now : null,
+      last_event_at: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : null,
+      stale: false,
+      error: this.programRoot ? null : "知行台知识运行时缺失"
+    };
+    const executorHealth: FactualHealth = {
+      source_type: "codex_exec_v1",
+      configured: Boolean(codex),
+      supported: Boolean(codex && executor.supported),
+      last_seen_at: codex && executor.supported ? now : null,
+      last_event_at: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : null,
+      stale: false,
+      error: executor.error
+    };
+    const web = {
+      source_type: "chatgpt_web_receiver_v1",
+      configured: Boolean(this.token),
+      supported: this.health.receiver === "ready",
+      last_seen_at: this.health.receiver === "ready" ? now : null,
+      last_event_at: webLastEvent,
+      stale: staleSince(webLastEvent),
+      error: this.health.receiver === "ready" ? null : this.health.receiverMessage
+    };
+    const schedulerConfigured = Boolean(installState?.background_scheduler?.installed && !installState?.background_scheduler?.conflict);
+    const backgroundOwnsAutomation = automationOwner?.owner_kind === "background";
+    const schedulerRecent = backgroundOwnsAutomation || Boolean(backgroundState?.last_seen_at &&
+      Date.now() - Date.parse(backgroundState.last_seen_at) <= 3 * 60_000);
+    const processing = Boolean(automationOwner);
+    const schedulerHost: FactualHealth = {
+      source_type: "background_scheduler_v1",
+      configured: schedulerConfigured,
+      supported: schedulerConfigured && schedulerRecent && backgroundState?.supported === true,
+      last_seen_at: typeof backgroundState?.last_seen_at === "string" ? backgroundState.last_seen_at : null,
+      last_event_at: typeof backgroundState?.last_event_at === "string" ? backgroundState.last_event_at : null,
+      stale: !schedulerRecent && !processing,
+      phase: processing ? "processing" : backgroundState?.phase === "error" ? "error" :
+        backgroundState?.phase === "waiting" ? "waiting" : "idle",
+      owner_kind: automationOwner?.owner_kind || backgroundState?.owner_kind || null,
+      error: processing ? null : installState?.background_scheduler?.error || backgroundState?.error ||
+        (schedulerConfigured && !schedulerRecent ? "后台调度等待本次登录启动或心跳已中断" :
+          schedulerConfigured ? null : "后台调度尚未注册")
+    };
     const feishu = await this.readFeishuHealth();
     this.setHealth({
       runtime: this.programRoot ? "ready" : "unavailable",
-      codex: this.codexExecutable ? "ready" : "unavailable",
+      codex: executorHealth.supported ? "ready" : "unavailable",
+      web,
+      capture: { cliHook, desktop },
+      organizer: { runtime: runtimeHealth, executor: executorHealth },
+      schedulerHost,
+      schedule,
       lastCycle: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : undefined,
       feishu
     });
@@ -421,8 +537,42 @@ export class SuiteService {
   }
 
   private async runScheduledWork(): Promise<void> {
+    if (this.scheduledWork) return this.scheduledWork;
+    this.scheduledWork = this.performScheduledWork();
+    try { await this.scheduledWork; } finally { this.scheduledWork = undefined; }
+  }
+
+  private async performScheduledWork(): Promise<void> {
+    const vault = this.vaultBasePath();
     await this.runFeishuIfDue();
-    await this.runMissedCycle();
+    await this.refreshHealth();
+    if (this.health.schedulerHost.supported) return;
+    if (!this.programRoot || this.health.running) return;
+    const result = await runOwnedAutomationTick({
+      vault,
+      codexHome: codexHomePath(),
+      ownerKind: "obsidian",
+      executorReady: this.health.organizer.runtime.supported && this.health.organizer.executor.supported,
+      runKnowledge: async () => {
+        if (!this.programRoot) throw new Error("知行台知识运行时缺失");
+        this.setHealth({ running: true });
+        try {
+          await execFileAsync(process.execPath, [path.join(this.programRoot, "runtime", "run-cycle.mjs"),
+            "--vault", vault, "--trigger", "automatic"], {
+            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+              ...(this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}) },
+            timeout: 6 * 60 * 60_000,
+            windowsHide: true,
+            maxBuffer: 8 * 1024 * 1024
+          });
+        } finally {
+          this.setHealth({ running: false });
+        }
+      }
+    });
+    if (result.state) this.setHealth({ schedule: result.state });
+    if (result.ran && !result.ok) console.error("Zhixing automatic knowledge cycle failed", result.error);
+    await this.refreshHealth();
   }
 
   private async runFeishuIfDue(): Promise<void> {
@@ -444,9 +594,13 @@ export class SuiteService {
         selectedChats: config.selected_chats.length, selectedBases: config.selected_bases.length };
     }
     const failedModules = Number(state.failed_modules || 0);
-    const status = !cli || !this.programRoot ? "unavailable" : failedModules > 0 || state.status === "failed" ? "attention" : "ready";
+    const lastSuccess = typeof state.last_success === "string" ? state.last_success : undefined;
+    const stale = staleSince(lastSuccess || null);
+    const status = !cli || !this.programRoot ? "unavailable" :
+      failedModules > 0 || state.status === "failed" || !lastSuccess || stale ? "attention" : "ready";
     const message = !cli ? "未找到 lark-cli" : !this.programRoot ? "知行台运行时缺失" :
-      failedModules > 0 ? `${failedModules} 个模块等待重试` : state.last_success ? "飞书只读同步正常" : "等待首次同步";
+      failedModules > 0 ? `${failedModules} 个模块等待重试` : !lastSuccess ? "等待首次同步" :
+        stale ? "飞书已久未同步" : "飞书只读同步正常";
     return {
       status,
       enabled: true,
@@ -455,24 +609,19 @@ export class SuiteService {
       enabledModules,
       selectedChats: config.selected_chats.length,
       selectedBases: config.selected_bases.length,
-      lastSync: typeof state.last_success === "string" ? state.last_success : undefined,
+      lastSync: lastSuccess,
       pending,
       failedModules,
       retryAt: typeof state.retry_at === "string" ? state.retry_at : undefined,
       message,
-      syncing: this.health.feishu.syncing
+      syncing: this.health.feishu.syncing,
+      configured: true,
+      supported: cli && Boolean(this.programRoot),
+      lastSeenAt: typeof state.last_attempt === "string" ? state.last_attempt : undefined,
+      lastEventAt: lastSuccess,
+      stale,
+      error: typeof state.error === "string" ? state.error : failedModules > 0 ? `${failedModules} 个模块同步失败` : undefined
     };
-  }
-
-  private async runMissedCycle(): Promise<void> {
-    if (!this.programRoot || this.health.running) return;
-    const now = new Date();
-    const lastDate = this.health.lastCycle ? localDate(new Date(this.health.lastCycle)) : "";
-    const today = localDate(now);
-    const reachedDailyTime = now.getHours() > 23 || (now.getHours() === 23 && now.getMinutes() >= 30);
-    const missedEarlierDay = Boolean(lastDate && lastDate < today);
-    if (!missedEarlierDay && (!reachedDailyTime || lastDate === today)) return;
-    await this.runKnowledgeNow();
   }
 
   private vaultBasePath(): string {
@@ -596,7 +745,27 @@ const FEISHU_SCOPE_MAP: Record<string, string[]> = {
 
 function emptyFeishuHealth(): FeishuHealth {
   return { status: "disabled", enabled: false, cli: "missing", enabledModules: [], selectedChats: 0,
-    selectedBases: 0, pending: 0, failedModules: 0, message: "飞书连接器未开启", syncing: false };
+    selectedBases: 0, pending: 0, failedModules: 0, message: "飞书连接器未开启", syncing: false,
+    configured: false, supported: false, stale: false };
+}
+
+function emptyFactualHealth(sourceType: string): FactualHealth {
+  return { source_type: sourceType, configured: false, supported: false, last_seen_at: null,
+    last_event_at: null, stale: true, error: null };
+}
+
+function emptyScheduleState(): KnowledgeScheduleState {
+  return { schema_version: 1, last_attempt: null, last_success: null, next_due: null,
+    status: "idle", error: null, failure_count: 0, trigger: null, owner_pid: null };
+}
+
+function staleSince(value: string | null, threshold = 36 * 60 * 60_000): boolean {
+  const parsed = value ? Date.parse(value) : Number.NaN;
+  return !Number.isFinite(parsed) || Date.now() - parsed > threshold;
+}
+
+function codexHomePath(): string {
+  return path.resolve(process.env.CODEX_HOME || path.join(homedir(), ".codex"));
 }
 
 function normalizeFeishuConfig(value: any): FeishuConnectorConfig {

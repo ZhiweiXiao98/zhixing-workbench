@@ -68,9 +68,11 @@ codex plugin add zhixing-workbench@zhixing-workbench
 打开 Obsidian 左侧的日历账本图标：
 
 1. “成果”页能看到匿名欢迎样例或新采集的任务。
-2. “整理记录”页能看到网页采集、知识运行时、Codex、飞书和更新状态。
+2. “整理记录”页能分别看到 Codex Desktop、CLI Hook、网页接收、知识执行器、后台调度和飞书的配置、探活、最后事件与错误状态。
 3. 在 ChatGPT 当前页面点击扩展的“采集本页”，队列应从“待发送”变成“已全部发送”。
 4. 回到 Obsidian，状态中的“最近接收”时间应更新；原始记录位于 Vault 的 `raw/chatgpt/events/`。
+5. 完成一轮 Codex Desktop 对话后，桌面采集状态应显示最后事件时间；即使采集异常，“立即整理”仍可处理已有队列。
+6. 后台调度显示心跳后可以关闭 Obsidian；电脑在 23:30 睡眠或离线时，会在恢复后补跑已有队列。
 
 ## 更新
 

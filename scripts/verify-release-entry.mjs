@@ -31,6 +31,7 @@ const environment = {
   USERPROFILE: temporary,
   XDG_CONFIG_HOME: xdgConfig
 };
+environment.ZHIXING_BACKGROUND_LAUNCH_DISABLED = "1";
 delete environment.ZHIXING_CONFIG;
 
 try {
@@ -185,7 +186,7 @@ async function verifyWindowsLegacyMigration(packageRoot, version) {
   assert.equal(diagnosis.version, version);
   assert.equal(diagnosis.vault, "ready");
   assert.equal(diagnosis.obsidian_plugin, "ready");
-  assert.equal(diagnosis.codex_hooks, "ready");
+  assert.equal(diagnosis.codex_hooks, "configured");
 
   const removed = await installer.uninstallSuite(installOptions);
   assert.equal(removed.status, "uninstalled");

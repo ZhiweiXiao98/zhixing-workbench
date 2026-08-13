@@ -76,6 +76,8 @@ test("安装与卸载只处理程序并保留 Vault 个人内容", async () => {
     const installed = await installSuite(options);
     assert.equal(installed.ok, true);
     assert.equal(installed.browser_extension, path.join(config, "browser-extension"));
+    assert.equal(installed.background_scheduler.installed, true);
+    assert.equal((await stat(installed.background_scheduler.entry_path)).isFile(), true);
     assert.equal(JSON.parse(await readFile(path.join(installed.browser_extension, "manifest.json"), "utf8")).version, installed.version);
     assert.equal(await readFile(agents, "utf8"), "# 我自己的规则\n");
     assert.match(await readFile(path.join(vault, "wiki", "示例", "把一次排查变成下次可复用的经验.md"), "utf8"), /zhixing_sample: true/);
@@ -91,7 +93,7 @@ test("安装与卸载只处理程序并保留 Vault 个人内容", async () => {
     await writeFile(extensionManifest, `${JSON.stringify(staleManifest, null, 2)}\n`, "utf8");
     await installSuite(options);
     assert.equal(await readFile(path.join(config, "device.json"), "utf8"), deviceBefore);
-    assert.equal(JSON.parse(await readFile(extensionManifest, "utf8")).version, "0.6.2");
+    assert.equal(JSON.parse(await readFile(extensionManifest, "utf8")).version, "0.6.3");
     const installedMain = path.join(vault, ".obsidian", "plugins", "zhixing-workbench", "main.js");
     await writeFile(installedMain, "stable-before-update\n", "utf8");
     await writeFile(path.join(installed.browser_extension, "service-worker.js"), "stable-extension-before-update\n", "utf8");
@@ -102,12 +104,17 @@ test("安装与卸载只处理程序并保留 Vault 个人内容", async () => {
     const diagnosis = await diagnoseSuite({ vault, codexHome, configOptions: options.configOptions });
     assert.equal(diagnosis.browser_extension, "ready");
     assert.equal(diagnosis.browser_extension_path, installed.browser_extension);
+    assert.equal(diagnosis.background_scheduler.configured, true);
+    assert.equal(diagnosis.background_scheduler.supported, false);
+    assert.match(diagnosis.background_scheduler.error, /尚未运行|心跳/);
     const removed = await uninstallSuite({
       vault,
       codexHome,
       configOptions: options.configOptions
     });
     assert.equal(removed.status, "uninstalled");
+    assert.equal(removed.background_scheduler_removed, true);
+    await assert.rejects(stat(installed.background_scheduler.entry_path));
     assert.deepEqual(removed.legacy_hook_conflicts, []);
     assert.equal(await readFile(personal, "utf8"), "这是一份不会被程序覆盖的个人内容。\n");
     assert.match(await readFile(feishuConfig, "utf8"), /"enabled":true/);
@@ -182,7 +189,7 @@ test("v0.6.0 未修改 Skill 与旧程序副本一致时可安全认领升级", 
     for (const skill of SKILLS) {
       const marker = JSON.parse(await readFile(path.join(fixture.codexHome, "skills", skill, ".zhixing-owner.json"), "utf8"));
       assert.equal(marker.owner, "zhixing-workbench");
-      assert.equal(marker.installed_version, "0.6.2");
+      assert.equal(marker.installed_version, "0.6.3");
     }
   } finally {
     await fixture.cleanup();
@@ -398,7 +405,7 @@ test("再次安装可修复 0.6.1 已迁移但任务状态和旧 Hook 留错的�
     assert.equal(countLegacyHooks(repairedHooks, fixture.codexHome), 0);
     assert.equal(countOwnedHooks(repairedHooks), 2);
     assert.match(JSON.stringify(repairedHooks), /bad-request-continue/);
-    assert.equal(repairedState.version, "0.6.2");
+    assert.equal(repairedState.version, "0.6.3");
     assert.equal(repairedState.legacy_migration.legacy_hooks.entries.length, 2);
     assert.deepEqual(repairedState.legacy_migration.legacy_tasks.map((item) => item.was_enabled), [true, true, true]);
 
