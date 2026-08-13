@@ -4174,9 +4174,9 @@ function reconcileExplicitWorkIdentities(events) {
   const groups = /* @__PURE__ */ new Map();
   for (const event of events) {
     if (!event.taskKey || !TASK_KINDS2.has(event.kind)) continue;
-    const identifier = explicitWorkIdentifier(event);
-    if (!identifier) continue;
-    const key = `${event.projectKey}:${identifier}`;
+    const identifier2 = explicitWorkIdentifier(event);
+    if (!identifier2) continue;
+    const key = `${event.projectKey}:${identifier2}`;
     const group = groups.get(key) ?? [];
     group.push(event);
     groups.set(key, group);
@@ -5872,6 +5872,112 @@ function formatHealthTime(value) {
 
 // src/feishu-settings.ts
 var import_obsidian3 = require("obsidian");
+
+// src/feishu-base-picker.ts
+function isFeishuUrl(value) {
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" && /(^|\.)(feishu\.cn|larksuite\.com|larkoffice\.com)$/i.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+function parseBaseLookupPayload(payload) {
+  const data = payload?.data ?? payload ?? {};
+  const baseToken = identifier(data.base_token);
+  const tableId = identifier(data.table_id || (data.block_type === "table" ? data.block_id : ""));
+  const viewId = identifier(data.view_id);
+  if (baseToken && tableId && viewId) {
+    const baseTitle = display(data.title || "\u591A\u7EF4\u8868\u683C");
+    const tableName = display(data.block_name || "\u6570\u636E\u8868");
+    const viewName = display(data.view_name || "\u6240\u9009\u89C6\u56FE");
+    return { kind: "resolved", selection: createBaseSelection({
+      baseToken,
+      tableId,
+      viewId,
+      label: readableSelectionLabel(baseTitle, tableName, viewName)
+    }) };
+  }
+  const candidates = (Array.isArray(data.candidates) ? data.candidates : []).map((item) => ({
+    baseToken: identifier(item?.base_token),
+    title: display(item?.title || "\u672A\u547D\u540D\u591A\u7EF4\u8868\u683C"),
+    ownerName: display(item?.owner_name || ""),
+    url: safeUrl2(item?.url)
+  })).filter((item) => item.baseToken).slice(0, 20);
+  if (candidates.length === 0 && baseToken) {
+    candidates.push({ baseToken, title: display(data.title || "\u591A\u7EF4\u8868\u683C"), ownerName: "", url: "" });
+  }
+  return { kind: "candidates", candidates };
+}
+function parseBaseTablesPayload(payload) {
+  const data = payload?.data ?? payload ?? {};
+  return (Array.isArray(data.blocks) ? data.blocks : []).filter((item) => item?.type === "table").map((item) => ({ id: identifier(item?.id), name: display(item?.name || "\u672A\u547D\u540D\u6570\u636E\u8868") })).filter((item) => item.id).slice(0, 100);
+}
+function parseRecentBasesPayload(payload) {
+  const data = payload?.data ?? payload ?? {};
+  return (Array.isArray(data.results) ? data.results : []).map((item) => {
+    const meta = item?.result_meta ?? {};
+    const iconToken = parseIconToken(meta.icon_info);
+    const url = safeUrl2(meta.url);
+    return {
+      baseToken: identifier(iconToken || baseTokenFromUrl(url) || meta.base_token),
+      title: display(stripMarkup(item?.title_highlighted || meta.title || "\u672A\u547D\u540D\u591A\u7EF4\u8868\u683C")),
+      ownerName: display(meta.owner_name || ""),
+      url
+    };
+  }).filter((item) => item.baseToken).slice(0, 20);
+}
+function parseBaseViewsPayload(payload) {
+  const data = payload?.data ?? payload ?? {};
+  return (Array.isArray(data.views) ? data.views : []).map((item) => ({ id: identifier(item?.id), name: display(item?.name || "\u672A\u547D\u540D\u89C6\u56FE"), type: identifier(item?.type) })).filter((item) => item.id).slice(0, 200);
+}
+function createBaseSelection(input) {
+  const baseToken = identifier(input.baseToken);
+  const tableId = identifier(input.tableId);
+  const viewId = identifier(input.viewId);
+  if (!baseToken || !tableId || !viewId) throw new Error("\u8BF7\u9009\u62E9\u5B8C\u6574\u7684\u6570\u636E\u8868\u548C\u89C6\u56FE");
+  return {
+    selection_key: `${baseToken}:${tableId}:${viewId}`,
+    base_token: baseToken,
+    table_id: tableId,
+    view_id: viewId,
+    label: display(input.label || "\u5DF2\u9009 Base \u89C6\u56FE"),
+    field_ids: []
+  };
+}
+function readableSelectionLabel(base, table, view) {
+  return [base, table, view].map(display).filter(Boolean).join(" / ") || "\u5DF2\u9009 Base \u89C6\u56FE";
+}
+function identifier(value) {
+  return String(value || "").trim().replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 300);
+}
+function display(value) {
+  return String(value || "").replace(/[\r\n]+/g, " ").trim().slice(0, 300);
+}
+function safeUrl2(value) {
+  const result2 = String(value || "").trim();
+  return isFeishuUrl(result2) ? result2 : "";
+}
+function parseIconToken(value) {
+  try {
+    return identifier(JSON.parse(String(value || "{}"))?.token);
+  } catch {
+    return "";
+  }
+}
+function baseTokenFromUrl(value) {
+  try {
+    const match2 = new URL(value).pathname.match(/\/(?:base|app)\/([A-Za-z0-9._:-]+)/i);
+    return identifier(match2?.[1]);
+  } catch {
+    return "";
+  }
+}
+function stripMarkup(value) {
+  return String(value || "").replace(/<[^>]*>/g, "");
+}
+
+// src/feishu-settings.ts
 var MODULES = [
   ["tasks", "\u6211\u7684\u4EFB\u52A1", "\u5206\u914D\u7ED9\u6211\u7684\u4EFB\u52A1\u53CA\u72B6\u6001\u53D8\u5316"],
   ["calendar", "\u65E5\u7A0B", "\u6211\u53C2\u52A0\u7684\u65E5\u7A0B"],
@@ -5893,7 +5999,14 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
   authorizationStarted = false;
   busy = false;
   chatText = "";
-  baseText = "";
+  baseQuery = "";
+  baseCandidates = [];
+  baseTables = [];
+  baseViews = [];
+  pickerBase;
+  selectedTableId = "";
+  selectedViewId = "";
+  baseLookupMessage = "";
   onOpen() {
     this.modalEl.addClass("zhixing-feishu-modal");
     void this.load();
@@ -5904,7 +6017,6 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
   async load() {
     this.config = await this.suite.getFeishuConfig();
     this.chatText = this.config.selected_chats.map((item) => `${item.label} | ${item.chat_id || item.query || ""}`).join("\n");
-    this.baseText = this.config.selected_bases.map((item) => `${item.label} | ${item.base_token}?table=${item.table_id}&view=${item.view_id}${item.field_ids.length ? ` | ${item.field_ids.join(",")}` : ""}`).join("\n");
     this.render();
   }
   render() {
@@ -5969,13 +6081,31 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     }
     if (this.config?.modules.base) {
       const base = parent.createDiv({ cls: "zhixing-feishu-selection" });
-      base.createEl("h3", { text: "Base \u89C6\u56FE" });
-      base.createDiv({ text: "\u6BCF\u884C\u4E00\u4E2A\uFF1A\u540D\u79F0 | Base \u89C6\u56FE\u94FE\u63A5 | \u53EF\u9009\u5B57\u6BB5\u540D\uFF08\u9017\u53F7\u5206\u9694\uFF09" });
-      const input = base.createEl("textarea", { attr: { rows: "4", placeholder: "\u9700\u6C42\u89C6\u56FE | https://example.feishu.cn/base/bas_xxx?table=tbl_xxx&view=viw_xxx" } });
-      input.value = this.baseText;
+      base.createEl("h3", { text: "\u591A\u7EF4\u8868\u683C" });
+      base.createDiv({ text: "\u8F93\u5165\u540D\u79F0\u67E5\u627E\uFF0C\u6216\u76F4\u63A5\u7C98\u8D34\u98DE\u4E66\u4E2D\u7684\u591A\u7EF4\u8868\u683C\u94FE\u63A5\u3002\u77E5\u8BC6\u5E93\u94FE\u63A5\u4E5F\u53EF\u4EE5\u3002" });
+      this.renderSelectedBases(base);
+      const lookup = base.createDiv({ cls: "zhixing-feishu-base-lookup" });
+      const input = lookup.createEl("input", { type: "text", placeholder: "\u4F8B\u5982\uFF1AAI \u5F00\u53D1\u4EFB\u52A1\uFF1B\u4E5F\u53EF\u4EE5\u7C98\u8D34\u98DE\u4E66\u94FE\u63A5" });
+      input.value = this.baseQuery;
+      input.disabled = this.busy;
       input.addEventListener("input", () => {
-        this.baseText = input.value;
+        this.baseQuery = input.value;
       });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void this.lookupBase();
+        }
+      });
+      const search = lookup.createEl("button", { text: this.busy ? "\u6B63\u5728\u67E5\u627E" : "\u67E5\u627E" });
+      search.disabled = this.busy;
+      search.addEventListener("click", () => void this.lookupBase());
+      const recent = lookup.createEl("button", { text: "\u6700\u8FD1\u4F7F\u7528" });
+      recent.disabled = this.busy;
+      recent.addEventListener("click", () => void this.browseRecentBases());
+      this.renderBaseCandidates(base);
+      this.renderBasePicker(base);
+      if (this.baseLookupMessage) base.createDiv({ cls: "zhixing-feishu-base-message", text: this.baseLookupMessage });
     }
     if (!this.config?.modules.messages && !this.config?.modules.base) {
       const empty = parent.createDiv({ cls: "zhixing-feishu-empty" });
@@ -6011,7 +6141,7 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     const summary = parent.createDiv({ cls: "zhixing-feishu-confirm" });
     metric(summary, "\u6A21\u5757", String(Object.values(this.config?.modules || {}).filter(Boolean).length));
     metric(summary, "\u9879\u76EE\u7FA4", String(parseChats(this.chatText).length));
-    metric(summary, "Base \u89C6\u56FE", String(parseBases(this.baseText).length));
+    metric(summary, "Base \u89C6\u56FE", String(this.config?.selected_bases.length || 0));
     metric(summary, "\u540C\u6B65\u95F4\u9694", `${this.config?.sync_interval_minutes || 60} \u5206\u949F`);
     new import_obsidian3.Setting(parent).setName("\u5F00\u542F\u98DE\u4E66\u53EA\u8BFB\u540C\u6B65").setDesc("\u9519\u8FC7\u540C\u6B65\u540E\u4F1A\u5728 Obsidian \u4E0B\u6B21\u542F\u52A8\u65F6\u8865\u8DD1").addToggle((toggle) => toggle.setValue(Boolean(this.config?.enabled)).onChange((value) => {
       if (this.config) this.config.enabled = value;
@@ -6045,7 +6175,6 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     }
     if (this.step === 2) {
       this.config.selected_chats = parseChats(this.chatText);
-      this.config.selected_bases = parseBases(this.baseText);
       if (this.config.modules.messages && this.config.selected_chats.length === 0) {
         new import_obsidian3.Notice("\u5DF2\u5F00\u542F\u9879\u76EE\u7FA4\u6D88\u606F\uFF0C\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u9879\u76EE\u7FA4");
         return;
@@ -6087,6 +6216,172 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
       this.render();
     }
   }
+  renderSelectedBases(parent) {
+    if (!this.config?.selected_bases.length) return;
+    const selected = parent.createDiv({ cls: "zhixing-feishu-base-selected" });
+    for (const item of this.config.selected_bases) {
+      const row = selected.createDiv();
+      (0, import_obsidian3.setIcon)(row.createSpan(), "table-2");
+      row.createSpan({ text: item.label });
+      const remove = row.createEl("button", { attr: { "aria-label": `\u79FB\u9664 ${item.label}` } });
+      (0, import_obsidian3.setIcon)(remove, "x");
+      remove.addEventListener("click", () => {
+        if (!this.config) return;
+        this.config.selected_bases = this.config.selected_bases.filter((value) => value.selection_key !== item.selection_key);
+        this.render();
+      });
+    }
+  }
+  renderBaseCandidates(parent) {
+    if (this.baseCandidates.length === 0) return;
+    const results = parent.createDiv({ cls: "zhixing-feishu-base-results" });
+    results.createDiv({ cls: "zhixing-feishu-base-caption", text: "\u9009\u62E9\u4E00\u4E2A\u591A\u7EF4\u8868\u683C" });
+    for (const candidate of this.baseCandidates.slice(0, 8)) {
+      const row = results.createDiv();
+      const copy = row.createDiv();
+      copy.createEl("strong", { text: candidate.title });
+      if (candidate.ownerName) copy.createSpan({ text: `\u6240\u6709\u8005\uFF1A${candidate.ownerName}` });
+      const choose = row.createEl("button", { text: "\u9009\u62E9" });
+      choose.disabled = this.busy;
+      choose.addEventListener("click", () => void this.chooseBase(candidate));
+    }
+  }
+  renderBasePicker(parent) {
+    if (!this.pickerBase || this.baseTables.length === 0) return;
+    const picker = parent.createDiv({ cls: "zhixing-feishu-base-picker" });
+    picker.createEl("strong", { text: this.pickerBase.title });
+    const controls = picker.createDiv();
+    const table = controls.createEl("select", { attr: { "aria-label": "\u9009\u62E9\u6570\u636E\u8868" } });
+    for (const item of this.baseTables) table.createEl("option", { text: item.name, value: item.id });
+    table.value = this.selectedTableId;
+    table.disabled = this.busy;
+    table.addEventListener("change", () => void this.chooseTable(table.value));
+    const view = controls.createEl("select", { attr: { "aria-label": "\u9009\u62E9\u89C6\u56FE" } });
+    for (const item of this.baseViews) view.createEl("option", { text: item.name, value: item.id });
+    view.value = this.selectedViewId;
+    view.disabled = this.busy || this.baseViews.length === 0;
+    view.addEventListener("change", () => {
+      this.selectedViewId = view.value;
+    });
+    const add = picker.createEl("button", { cls: "mod-cta", text: "\u6DFB\u52A0\u8FD9\u4E2A\u89C6\u56FE" });
+    add.disabled = this.busy || !this.selectedViewId;
+    add.addEventListener("click", () => this.addPickedBase());
+  }
+  async lookupBase() {
+    if (!this.baseQuery.trim()) {
+      new import_obsidian3.Notice("\u8BF7\u8F93\u5165\u591A\u7EF4\u8868\u683C\u540D\u79F0\uFF0C\u6216\u7C98\u8D34\u98DE\u4E66\u94FE\u63A5");
+      return;
+    }
+    this.busy = true;
+    this.baseCandidates = [];
+    this.pickerBase = void 0;
+    this.baseTables = [];
+    this.baseViews = [];
+    this.baseLookupMessage = "\u6B63\u5728\u98DE\u4E66\u4E2D\u67E5\u627E\u2026";
+    this.render();
+    try {
+      const result2 = await this.suite.findFeishuBases(this.baseQuery);
+      if (result2.kind === "resolved") {
+        this.addBaseSelection(result2.selection);
+        this.baseQuery = "";
+        this.baseLookupMessage = `\u5DF2\u6DFB\u52A0\uFF1A${result2.selection.label}`;
+      } else {
+        this.baseCandidates = result2.candidates;
+        this.baseLookupMessage = result2.candidates.length === 1 ? "\u627E\u5230 1 \u4E2A\u7ED3\u679C\uFF0C\u8BF7\u9009\u62E9" : `\u627E\u5230 ${result2.candidates.length} \u4E2A\u7ED3\u679C\uFF0C\u8BF7\u9009\u62E9`;
+      }
+    } catch (error) {
+      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      new import_obsidian3.Notice(this.baseLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+  async browseRecentBases() {
+    this.busy = true;
+    this.baseCandidates = [];
+    this.pickerBase = void 0;
+    this.baseTables = [];
+    this.baseViews = [];
+    this.baseLookupMessage = "\u6B63\u5728\u8BFB\u53D6\u6700\u8FD1\u4F7F\u7528\u7684\u591A\u7EF4\u8868\u683C\u2026";
+    this.render();
+    try {
+      this.baseCandidates = await this.suite.listRecentFeishuBases();
+      this.baseLookupMessage = `\u627E\u5230 ${this.baseCandidates.length} \u4E2A\u6700\u8FD1\u4F7F\u7528\u7684\u591A\u7EF4\u8868\u683C\uFF0C\u8BF7\u9009\u62E9`;
+    } catch (error) {
+      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      new import_obsidian3.Notice(this.baseLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+  async chooseBase(candidate) {
+    this.busy = true;
+    this.pickerBase = candidate;
+    this.baseCandidates = [];
+    this.baseTables = [];
+    this.baseViews = [];
+    this.baseLookupMessage = "\u6B63\u5728\u8BFB\u53D6\u6570\u636E\u8868\u548C\u89C6\u56FE\u2026";
+    this.render();
+    try {
+      this.baseTables = await this.suite.listFeishuBaseTables(candidate.baseToken);
+      this.selectedTableId = this.baseTables[0]?.id || "";
+      await this.loadViews();
+      this.baseLookupMessage = "\u8BF7\u9009\u62E9\u6570\u636E\u8868\u548C\u89C6\u56FE\uFF0C\u7136\u540E\u6DFB\u52A0";
+    } catch (error) {
+      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      new import_obsidian3.Notice(this.baseLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+  async chooseTable(tableId) {
+    this.selectedTableId = tableId;
+    this.busy = true;
+    this.baseViews = [];
+    this.baseLookupMessage = "\u6B63\u5728\u8BFB\u53D6\u89C6\u56FE\u2026";
+    this.render();
+    try {
+      await this.loadViews();
+      this.baseLookupMessage = "\u8BF7\u9009\u62E9\u6570\u636E\u8868\u548C\u89C6\u56FE\uFF0C\u7136\u540E\u6DFB\u52A0";
+    } catch (error) {
+      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      new import_obsidian3.Notice(this.baseLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+  async loadViews() {
+    if (!this.pickerBase || !this.selectedTableId) return;
+    this.baseViews = await this.suite.listFeishuBaseViews(this.pickerBase.baseToken, this.selectedTableId);
+    this.selectedViewId = this.baseViews[0]?.id || "";
+  }
+  addPickedBase() {
+    if (!this.pickerBase) return;
+    const table = this.baseTables.find((item) => item.id === this.selectedTableId);
+    const view = this.baseViews.find((item) => item.id === this.selectedViewId);
+    const selection = createBaseSelection({
+      baseToken: this.pickerBase.baseToken,
+      tableId: this.selectedTableId,
+      viewId: this.selectedViewId,
+      label: readableSelectionLabel(this.pickerBase.title, table?.name || "\u6570\u636E\u8868", view?.name || "\u89C6\u56FE")
+    });
+    this.addBaseSelection(selection);
+    this.baseQuery = "";
+    this.pickerBase = void 0;
+    this.baseTables = [];
+    this.baseViews = [];
+    this.baseLookupMessage = `\u5DF2\u6DFB\u52A0\uFF1A${selection.label}`;
+    this.render();
+  }
+  addBaseSelection(selection) {
+    if (!this.config) return;
+    const values = this.config.selected_bases.filter((item) => item.selection_key !== selection.selection_key);
+    this.config.selected_bases = [...values, selection];
+  }
   async refresh() {
     this.busy = true;
     await this.suite.refreshHealth();
@@ -6121,27 +6416,6 @@ function parseChats(value) {
       query,
       label: labelPart === id || labelPart === sourcePart ? query || "\u5DF2\u9009\u9879\u76EE\u7FA4" : labelPart,
       type: "project_group"
-    });
-  }
-  return uniqueBy4(results, (item) => item.selection_key);
-}
-function parseBases(value) {
-  const results = [];
-  for (const line of value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
-    const parts = line.split(/\s*\|\s*/);
-    const label = parts.length >= 2 ? parts[0] || "\u5DF2\u9009 Base \u89C6\u56FE" : "\u5DF2\u9009 Base \u89C6\u56FE";
-    const source = parts.length >= 2 ? parts[1] || "" : line;
-    const fields = (parts[2] || "").split(/[,，]/).map((item) => item.trim()).filter(Boolean).slice(0, 40);
-    const base = source.match(/\b(?:bas|bascn)[A-Za-z0-9_-]+\b/)?.[0];
-    const table = source.match(/[?&]table=([A-Za-z0-9_-]+)/)?.[1] || source.match(/\btbl[A-Za-z0-9_-]+\b/)?.[0];
-    const view = source.match(/[?&]view=([A-Za-z0-9_-]+)/)?.[1] || source.match(/\bviw[A-Za-z0-9_-]+\b/)?.[0];
-    if (base && table && view) results.push({
-      selection_key: `${base}:${table}:${view}`,
-      base_token: base,
-      table_id: table,
-      view_id: view,
-      label: label || "\u5DF2\u9009 Base \u89C6\u56FE",
-      field_ids: fields
     });
   }
   return uniqueBy4(results, (item) => item.selection_key);
@@ -6511,25 +6785,25 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
     update.addEventListener("click", () => void this.suite.checkForUpdate());
   }
   renderFactualHealthChip(parent, health, icon, labels) {
-    const display = factualHealthDisplay(health, labels);
-    const chip = parent.createSpan({ cls: `zhixing-health-chip is-${display.state}` });
-    (0, import_obsidian4.setIcon)(chip, display.state === "unavailable" ? "triangle-alert" : icon);
-    chip.createSpan({ text: display.label });
-    chip.setAttribute("title", display.title);
+    const display2 = factualHealthDisplay(health, labels);
+    const chip = parent.createSpan({ cls: `zhixing-health-chip is-${display2.state}` });
+    (0, import_obsidian4.setIcon)(chip, display2.state === "unavailable" ? "triangle-alert" : icon);
+    chip.createSpan({ text: display2.label });
+    chip.setAttribute("title", display2.title);
   }
   renderIngestRunRow(parent, run) {
-    const display = ingestRunDisplay(run);
+    const display2 = ingestRunDisplay(run);
     const button = parent.createEl("button", {
       cls: "activity-ingest-row",
       attr: { type: "button", "aria-label": `\u67E5\u770B\u6574\u7406\u8BB0\u5F55\uFF1A${formatDateTime(run.startedAt)}` }
     });
     button.toggleClass("is-active", run.id === this.selectedIngestRunId);
-    const marker = button.createSpan({ cls: `activity-ingest-marker is-${display.key}` });
-    (0, import_obsidian4.setIcon)(marker, display.icon);
+    const marker = button.createSpan({ cls: `activity-ingest-marker is-${display2.key}` });
+    (0, import_obsidian4.setIcon)(marker, display2.icon);
     const body = button.createDiv({ cls: "activity-ingest-row-body" });
     const top = body.createDiv({ cls: "activity-ingest-row-top" });
     top.createSpan({ cls: "activity-ingest-time", text: formatDateTime(run.startedAt) });
-    top.createSpan({ cls: `activity-ingest-status is-${display.key}`, text: display.label });
+    top.createSpan({ cls: `activity-ingest-status is-${display2.key}`, text: display2.label });
     body.createDiv({
       cls: "activity-ingest-summary",
       text: run.source === "legacy-log" ? "\u65E7\u7248\u53EA\u4FDD\u7559\u8FD0\u884C\u6982\u8981\uFF0C\u5904\u7406\u7ED3\u679C\u4E0D\u53EF\u5B8C\u6574\u6838\u9A8C" : `\u9009\u4E2D ${run.selectedTopics} \u4E2A\u4E3B\u9898 \xB7 \u6210\u529F\u6C89\u6DC0 ${run.committedTopics} \u4E2A \xB7 \u5F85\u91CD\u8BD5/\u5931\u8D25 ${run.pendingTopics + run.failedTopics} \u4E2A \xB7 \u5269\u4F59 ${run.remainingTopics} \u4E2A`
@@ -6549,13 +6823,13 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
     });
   }
   renderIngestRunDetail(parent, run) {
-    const display = ingestRunDisplay(run);
+    const display2 = ingestRunDisplay(run);
     const heading = parent.createDiv({ cls: "activity-ingest-detail-heading" });
     const title = heading.createDiv();
     title.createEl("h3", { text: formatDateTime(run.startedAt) });
     title.createDiv({
       cls: "activity-artifact-detail-meta",
-      text: `${ingestTriggerLabel(run)} \xB7 ${display.label}${run.finishedAt ? ` \xB7 \u7528\u65F6 ${durationLabel(run.startedAt, run.finishedAt)}` : ""}`
+      text: `${ingestTriggerLabel(run)} \xB7 ${display2.label}${run.finishedAt ? ` \xB7 \u7528\u65F6 ${durationLabel(run.startedAt, run.finishedAt)}` : ""}`
     });
     if (run.logPath) {
       const openLog = this.iconTextButton(heading, "scroll-text", "\u67E5\u770B\u8FD0\u884C\u6765\u6E90", "open-ingest-log");
@@ -6571,7 +6845,7 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
         cls: "activity-artifact-attribution is-warning",
         text: "\u65E7\u7248\u8BB0\u5F55\u6CA1\u6709\u4E8B\u52A1\u7EA7\u9A8C\u8BC1\u4FE1\u606F\u3002\u8FD9\u91CC\u4E0D\u6839\u636E\u9000\u51FA\u7801\u63A8\u65AD\u6574\u7406\u6210\u529F\uFF0C\u7ED3\u679C\u8BF7\u4EE5\u6210\u679C\u548C Wiki \u5B9E\u9645\u5185\u5BB9\u4E3A\u51C6\u3002"
       });
-    } else if (display.key === "stalled") {
+    } else if (display2.key === "stalled") {
       parent.createDiv({
         cls: "activity-artifact-attribution is-warning",
         text: "\u8FD9\u6B21\u6574\u7406\u957F\u65F6\u95F4\u6CA1\u6709\u7ED3\u675F\u8BB0\u5F55\uFF0C\u53EF\u80FD\u88AB\u4E2D\u65AD\u3002\u672A\u6210\u529F\u5199\u5165\u7684\u5185\u5BB9\u4F1A\u4FDD\u7559\u5728\u961F\u5217\u4E2D\u7B49\u5F85\u91CD\u8BD5\u3002"
@@ -8888,6 +9162,78 @@ var SuiteService = class {
     await this.refreshHealth();
     return config;
   }
+  async findFeishuBases(value) {
+    const query = value.trim();
+    if (!query) throw new Error("\u8BF7\u8F93\u5165\u591A\u7EF4\u8868\u683C\u540D\u79F0\uFF0C\u6216\u7C98\u8D34\u98DE\u4E66\u94FE\u63A5");
+    const args = isFeishuUrl(query) ? ["base", "+url-resolve", "--url", query, "--as", "user", "--json"] : ["base", "+title-resolve", "--title", query.slice(0, 30), "--as", "user", "--json"];
+    const result2 = await executeLarkCli(args, feishuReadOptions(), this.larkExecutable);
+    const lookup = parseBaseLookupPayload(parseCommandJson(`${result2.stdout}
+${result2.stderr}`));
+    if (lookup.kind === "resolved") {
+      const views = await this.listFeishuBaseViews(lookup.selection.base_token, lookup.selection.table_id);
+      const view = views.find((item) => item.id === lookup.selection.view_id);
+      if (view) lookup.selection.label = lookup.selection.label.replace(/所选视图$/, view.name);
+    }
+    if (lookup.kind === "candidates" && lookup.candidates.length === 0) {
+      throw new Error(isFeishuUrl(query) ? "\u8FD9\u4E2A\u94FE\u63A5\u6CA1\u6709\u89E3\u6790\u5230\u53EF\u9009\u62E9\u7684\u591A\u7EF4\u8868\u683C" : "\u6CA1\u6709\u627E\u5230\u5339\u914D\u7684\u591A\u7EF4\u8868\u683C\uFF0C\u8BF7\u6362\u4E00\u4E2A\u66F4\u51C6\u786E\u7684\u540D\u79F0");
+    }
+    return lookup;
+  }
+  async listRecentFeishuBases() {
+    const result2 = await executeLarkCli([
+      "drive",
+      "+search",
+      "--as",
+      "user",
+      "--query",
+      "",
+      "--doc-types",
+      "bitable",
+      "--sort",
+      "edit_time",
+      "--page-size",
+      "20",
+      "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const candidates = parseRecentBasesPayload(parseCommandJson(`${result2.stdout}
+${result2.stderr}`));
+    if (candidates.length === 0) throw new Error("\u6CA1\u6709\u627E\u5230\u6700\u8FD1\u4F7F\u7528\u7684\u591A\u7EF4\u8868\u683C\uFF0C\u53EF\u4EE5\u8F93\u5165\u540D\u79F0\u7EE7\u7EED\u67E5\u627E");
+    return candidates;
+  }
+  async listFeishuBaseTables(baseToken) {
+    const result2 = await executeLarkCli([
+      "base",
+      "+base-block-list",
+      "--base-token",
+      baseToken,
+      "--type",
+      "table",
+      "--as",
+      "user",
+      "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const tables = parseBaseTablesPayload(parseCommandJson(`${result2.stdout}
+${result2.stderr}`));
+    if (tables.length === 0) throw new Error("\u8FD9\u4E2A\u591A\u7EF4\u8868\u683C\u4E2D\u6CA1\u6709\u53EF\u9009\u62E9\u7684\u6570\u636E\u8868");
+    return tables;
+  }
+  async listFeishuBaseViews(baseToken, tableId) {
+    const result2 = await executeLarkCli([
+      "base",
+      "+view-list",
+      "--base-token",
+      baseToken,
+      "--table-id",
+      tableId,
+      "--as",
+      "user",
+      "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const views = parseBaseViewsPayload(parseCommandJson(`${result2.stdout}
+${result2.stderr}`));
+    if (views.length === 0) throw new Error("\u8FD9\u4E2A\u6570\u636E\u8868\u4E2D\u6CA1\u6709\u53EF\u9009\u62E9\u7684\u89C6\u56FE");
+    return views;
+  }
   async beginFeishuAuthorization(config) {
     const scopes = feishuScopes(config);
     if (scopes.length === 0) throw new Error("\u8BF7\u5148\u9009\u62E9\u81F3\u5C11\u4E00\u4E2A\u98DE\u4E66\u6A21\u5757");
@@ -9276,7 +9622,7 @@ var FEISHU_SCOPE_MAP = {
   meetings: ["vc:meeting.search:read", "vc:recording:read"],
   minutes: ["minutes:minutes.basic:read", "minutes:minutes.artifacts:read"],
   documents: ["search:docs:read", "docs:document.content:read", "docx:document:readonly"],
-  base: ["base:record:read"],
+  base: ["search:docs:read", "base:table:read", "base:view:read", "base:record:read"],
   approvals: ["approval:task:read", "approval:instance:read"],
   messages: ["im:chat:read", "im:message:readonly"]
 };
@@ -9403,11 +9749,25 @@ function safeCommandError(error) {
 function larkCliEnv() {
   return { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" };
 }
+function feishuReadOptions() {
+  return { timeout: 6e4, windowsHide: true, maxBuffer: 4 * 1024 * 1024, env: larkCliEnv() };
+}
 async function executeLarkCli(args, options, located) {
   const executable = located || (await discoverExecutable("lark-cli"))?.path;
   if (!executable) throw new Error("\u672A\u627E\u5230\u5B98\u65B9 lark-cli\uFF0C\u8BF7\u91CD\u65B0\u5B89\u88C5\u6700\u65B0\u7248 @larksuite/cli");
-  const result2 = await execFileAsync4(executable, args, options);
-  return { stdout: String(result2.stdout || ""), stderr: String(result2.stderr || "") };
+  try {
+    const result2 = await execFileAsync4(executable, args, options);
+    return { stdout: String(result2.stdout || ""), stderr: String(result2.stderr || "") };
+  } catch (error) {
+    const output = `${String(error?.stdout || "")}
+${String(error?.stderr || "")}`;
+    try {
+      parseCommandJson(output);
+    } catch (parsed) {
+      if (parsed instanceof Error && parsed.message !== "\u98DE\u4E66 CLI \u672A\u8FD4\u56DE JSON") throw parsed;
+    }
+    throw new Error("\u98DE\u4E66\u6682\u65F6\u65E0\u6CD5\u5B8C\u6210\u8FD9\u6B21\u53EA\u8BFB\u67E5\u8BE2\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5");
+  }
 }
 
 // src/main.ts

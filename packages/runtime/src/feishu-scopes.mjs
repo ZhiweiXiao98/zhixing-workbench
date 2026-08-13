@@ -27,7 +27,7 @@ export const FEISHU_MODULES = Object.freeze({
   base: {
     label: "多维表格",
     reason: "读取用户明确选择的 Base 视图和字段",
-    scopes: ["base:record:read"]
+    scopes: ["search:docs:read", "base:table:read", "base:view:read", "base:record:read"]
   },
   approvals: {
     label: "审批结果",

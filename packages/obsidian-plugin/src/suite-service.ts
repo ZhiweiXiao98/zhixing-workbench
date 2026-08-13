@@ -13,6 +13,17 @@ import { runOwnedAutomationTick, runOwnedManualKnowledge } from "../../runtime/s
 import { readScheduleState, type KnowledgeScheduleState } from "../../runtime/src/knowledge-scheduler.mjs";
 import { readVaultAutomationOwner } from "../../runtime/src/runtime-lock.mjs";
 import { readCodexCliHookHealth } from "../../runtime/src/source-health.mjs";
+import {
+  isFeishuUrl,
+  parseBaseLookupPayload,
+  parseRecentBasesPayload,
+  parseBaseTablesPayload,
+  parseBaseViewsPayload,
+  type FeishuBaseCandidate,
+  type FeishuBaseLookup,
+  type FeishuBaseTable,
+  type FeishuBaseView
+} from "./feishu-base-picker";
 
 const execFileAsync = promisify(execFile);
 const RECEIVER_PORT = 43123;
@@ -353,6 +364,53 @@ export class SuiteService {
     await this.app.vault.adapter.write(".zhixing/feishu-connector.json", `${JSON.stringify(config, null, 2)}\n`);
     await this.refreshHealth();
     return config;
+  }
+
+  async findFeishuBases(value: string): Promise<FeishuBaseLookup> {
+    const query = value.trim();
+    if (!query) throw new Error("请输入多维表格名称，或粘贴飞书链接");
+    const args = isFeishuUrl(query)
+      ? ["base", "+url-resolve", "--url", query, "--as", "user", "--json"]
+      : ["base", "+title-resolve", "--title", query.slice(0, 30), "--as", "user", "--json"];
+    const result = await executeLarkCli(args, feishuReadOptions(), this.larkExecutable);
+    const lookup = parseBaseLookupPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    if (lookup.kind === "resolved") {
+      const views = await this.listFeishuBaseViews(lookup.selection.base_token, lookup.selection.table_id);
+      const view = views.find((item) => item.id === lookup.selection.view_id);
+      if (view) lookup.selection.label = lookup.selection.label.replace(/所选视图$/, view.name);
+    }
+    if (lookup.kind === "candidates" && lookup.candidates.length === 0) {
+      throw new Error(isFeishuUrl(query) ? "这个链接没有解析到可选择的多维表格" : "没有找到匹配的多维表格，请换一个更准确的名称");
+    }
+    return lookup;
+  }
+
+  async listRecentFeishuBases(): Promise<FeishuBaseCandidate[]> {
+    const result = await executeLarkCli([
+      "drive", "+search", "--as", "user", "--query", "", "--doc-types", "bitable",
+      "--sort", "edit_time", "--page-size", "20", "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const candidates = parseRecentBasesPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    if (candidates.length === 0) throw new Error("没有找到最近使用的多维表格，可以输入名称继续查找");
+    return candidates;
+  }
+
+  async listFeishuBaseTables(baseToken: string): Promise<FeishuBaseTable[]> {
+    const result = await executeLarkCli([
+      "base", "+base-block-list", "--base-token", baseToken, "--type", "table", "--as", "user", "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const tables = parseBaseTablesPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    if (tables.length === 0) throw new Error("这个多维表格中没有可选择的数据表");
+    return tables;
+  }
+
+  async listFeishuBaseViews(baseToken: string, tableId: string): Promise<FeishuBaseView[]> {
+    const result = await executeLarkCli([
+      "base", "+view-list", "--base-token", baseToken, "--table-id", tableId, "--as", "user", "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const views = parseBaseViewsPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    if (views.length === 0) throw new Error("这个数据表中没有可选择的视图");
+    return views;
   }
 
   async beginFeishuAuthorization(config: FeishuConnectorConfig): Promise<FeishuAuthorization> {
@@ -738,7 +796,7 @@ const FEISHU_SCOPE_MAP: Record<string, string[]> = {
   meetings: ["vc:meeting.search:read", "vc:recording:read"],
   minutes: ["minutes:minutes.basic:read", "minutes:minutes.artifacts:read"],
   documents: ["search:docs:read", "docs:document.content:read", "docx:document:readonly"],
-  base: ["base:record:read"],
+  base: ["search:docs:read", "base:table:read", "base:view:read", "base:record:read"],
   approvals: ["approval:task:read", "approval:instance:read"],
   messages: ["im:chat:read", "im:message:readonly"]
 };
@@ -839,9 +897,21 @@ function larkCliEnv(): NodeJS.ProcessEnv {
   return { ...process.env, LARKSUITE_CLI_NO_UPDATE_NOTIFIER: "1", LARKSUITE_CLI_NO_SKILLS_NOTIFIER: "1" };
 }
 
+function feishuReadOptions(): Parameters<typeof execFileAsync>[2] {
+  return { timeout: 60_000, windowsHide: true, maxBuffer: 4 * 1024 * 1024, env: larkCliEnv() };
+}
+
 async function executeLarkCli(args: string[], options: Parameters<typeof execFileAsync>[2], located?: string): Promise<{ stdout: string; stderr: string }> {
   const executable = located || (await discoverExecutable("lark-cli"))?.path;
   if (!executable) throw new Error("未找到官方 lark-cli，请重新安装最新版 @larksuite/cli");
-  const result = await execFileAsync(executable, args, options);
-  return { stdout: String(result.stdout || ""), stderr: String(result.stderr || "") };
+  try {
+    const result = await execFileAsync(executable, args, options);
+    return { stdout: String(result.stdout || ""), stderr: String(result.stderr || "") };
+  } catch (error: any) {
+    const output = `${String(error?.stdout || "")}\n${String(error?.stderr || "")}`;
+    try { parseCommandJson(output); } catch (parsed) {
+      if (parsed instanceof Error && parsed.message !== "飞书 CLI 未返回 JSON") throw parsed;
+    }
+    throw new Error("飞书暂时无法完成这次只读查询，请稍后重试");
+  }
 }

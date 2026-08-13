@@ -1,5 +1,12 @@
 import { Modal, Notice, Setting, setIcon, type App } from "obsidian";
 import type { FeishuConnectorConfig, SuiteService } from "./suite-service";
+import {
+  createBaseSelection,
+  readableSelectionLabel,
+  type FeishuBaseCandidate,
+  type FeishuBaseTable,
+  type FeishuBaseView
+} from "./feishu-base-picker";
 
 const MODULES = [
   ["tasks", "我的任务", "分配给我的任务及状态变化"],
@@ -18,7 +25,14 @@ export class FeishuSetupModal extends Modal {
   private authorizationStarted = false;
   private busy = false;
   private chatText = "";
-  private baseText = "";
+  private baseQuery = "";
+  private baseCandidates: FeishuBaseCandidate[] = [];
+  private baseTables: FeishuBaseTable[] = [];
+  private baseViews: FeishuBaseView[] = [];
+  private pickerBase?: FeishuBaseCandidate;
+  private selectedTableId = "";
+  private selectedViewId = "";
+  private baseLookupMessage = "";
 
   constructor(app: App, private readonly suite: SuiteService) {
     super(app);
@@ -36,8 +50,6 @@ export class FeishuSetupModal extends Modal {
   private async load(): Promise<void> {
     this.config = await this.suite.getFeishuConfig();
     this.chatText = this.config.selected_chats.map((item) => `${item.label} | ${item.chat_id || item.query || ""}`).join("\n");
-    this.baseText = this.config.selected_bases.map((item) =>
-      `${item.label} | ${item.base_token}?table=${item.table_id}&view=${item.view_id}${item.field_ids.length ? ` | ${item.field_ids.join(",")}` : ""}`).join("\n");
     this.render();
   }
 
@@ -108,11 +120,26 @@ export class FeishuSetupModal extends Modal {
     }
     if (this.config?.modules.base) {
       const base = parent.createDiv({ cls: "zhixing-feishu-selection" });
-      base.createEl("h3", { text: "Base 视图" });
-      base.createDiv({ text: "每行一个：名称 | Base 视图链接 | 可选字段名（逗号分隔）" });
-      const input = base.createEl("textarea", { attr: { rows: "4", placeholder: "需求视图 | https://example.feishu.cn/base/bas_xxx?table=tbl_xxx&view=viw_xxx" } });
-      input.value = this.baseText;
-      input.addEventListener("input", () => { this.baseText = input.value; });
+      base.createEl("h3", { text: "多维表格" });
+      base.createDiv({ text: "输入名称查找，或直接粘贴飞书中的多维表格链接。知识库链接也可以。" });
+      this.renderSelectedBases(base);
+      const lookup = base.createDiv({ cls: "zhixing-feishu-base-lookup" });
+      const input = lookup.createEl("input", { type: "text", placeholder: "例如：AI 开发任务；也可以粘贴飞书链接" });
+      input.value = this.baseQuery;
+      input.disabled = this.busy;
+      input.addEventListener("input", () => { this.baseQuery = input.value; });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") { event.preventDefault(); void this.lookupBase(); }
+      });
+      const search = lookup.createEl("button", { text: this.busy ? "正在查找" : "查找" });
+      search.disabled = this.busy;
+      search.addEventListener("click", () => void this.lookupBase());
+      const recent = lookup.createEl("button", { text: "最近使用" });
+      recent.disabled = this.busy;
+      recent.addEventListener("click", () => void this.browseRecentBases());
+      this.renderBaseCandidates(base);
+      this.renderBasePicker(base);
+      if (this.baseLookupMessage) base.createDiv({ cls: "zhixing-feishu-base-message", text: this.baseLookupMessage });
     }
     if (!this.config?.modules.messages && !this.config?.modules.base) {
       const empty = parent.createDiv({ cls: "zhixing-feishu-empty" });
@@ -150,7 +177,7 @@ export class FeishuSetupModal extends Modal {
     const summary = parent.createDiv({ cls: "zhixing-feishu-confirm" });
     metric(summary, "模块", String(Object.values(this.config?.modules || {}).filter(Boolean).length));
     metric(summary, "项目群", String(parseChats(this.chatText).length));
-    metric(summary, "Base 视图", String(parseBases(this.baseText).length));
+    metric(summary, "Base 视图", String(this.config?.selected_bases.length || 0));
     metric(summary, "同步间隔", `${this.config?.sync_interval_minutes || 60} 分钟`);
     new Setting(parent).setName("开启飞书只读同步").setDesc("错过同步后会在 Obsidian 下次启动时补跑")
       .addToggle((toggle) => toggle.setValue(Boolean(this.config?.enabled)).onChange((value) => { if (this.config) this.config.enabled = value; }));
@@ -183,7 +210,6 @@ export class FeishuSetupModal extends Modal {
     }
     if (this.step === 2) {
       this.config.selected_chats = parseChats(this.chatText);
-      this.config.selected_bases = parseBases(this.baseText);
       if (this.config.modules.messages && this.config.selected_chats.length === 0) {
         new Notice("已开启项目群消息，请至少选择一个项目群");
         return;
@@ -227,6 +253,177 @@ export class FeishuSetupModal extends Modal {
     }
   }
 
+  private renderSelectedBases(parent: HTMLElement): void {
+    if (!this.config?.selected_bases.length) return;
+    const selected = parent.createDiv({ cls: "zhixing-feishu-base-selected" });
+    for (const item of this.config.selected_bases) {
+      const row = selected.createDiv();
+      setIcon(row.createSpan(), "table-2");
+      row.createSpan({ text: item.label });
+      const remove = row.createEl("button", { attr: { "aria-label": `移除 ${item.label}` } });
+      setIcon(remove, "x");
+      remove.addEventListener("click", () => {
+        if (!this.config) return;
+        this.config.selected_bases = this.config.selected_bases.filter((value) => value.selection_key !== item.selection_key);
+        this.render();
+      });
+    }
+  }
+
+  private renderBaseCandidates(parent: HTMLElement): void {
+    if (this.baseCandidates.length === 0) return;
+    const results = parent.createDiv({ cls: "zhixing-feishu-base-results" });
+    results.createDiv({ cls: "zhixing-feishu-base-caption", text: "选择一个多维表格" });
+    for (const candidate of this.baseCandidates.slice(0, 8)) {
+      const row = results.createDiv();
+      const copy = row.createDiv();
+      copy.createEl("strong", { text: candidate.title });
+      if (candidate.ownerName) copy.createSpan({ text: `所有者：${candidate.ownerName}` });
+      const choose = row.createEl("button", { text: "选择" });
+      choose.disabled = this.busy;
+      choose.addEventListener("click", () => void this.chooseBase(candidate));
+    }
+  }
+
+  private renderBasePicker(parent: HTMLElement): void {
+    if (!this.pickerBase || this.baseTables.length === 0) return;
+    const picker = parent.createDiv({ cls: "zhixing-feishu-base-picker" });
+    picker.createEl("strong", { text: this.pickerBase.title });
+    const controls = picker.createDiv();
+    const table = controls.createEl("select", { attr: { "aria-label": "选择数据表" } });
+    for (const item of this.baseTables) table.createEl("option", { text: item.name, value: item.id });
+    table.value = this.selectedTableId;
+    table.disabled = this.busy;
+    table.addEventListener("change", () => void this.chooseTable(table.value));
+    const view = controls.createEl("select", { attr: { "aria-label": "选择视图" } });
+    for (const item of this.baseViews) view.createEl("option", { text: item.name, value: item.id });
+    view.value = this.selectedViewId;
+    view.disabled = this.busy || this.baseViews.length === 0;
+    view.addEventListener("change", () => { this.selectedViewId = view.value; });
+    const add = picker.createEl("button", { cls: "mod-cta", text: "添加这个视图" });
+    add.disabled = this.busy || !this.selectedViewId;
+    add.addEventListener("click", () => this.addPickedBase());
+  }
+
+  private async lookupBase(): Promise<void> {
+    if (!this.baseQuery.trim()) { new Notice("请输入多维表格名称，或粘贴飞书链接"); return; }
+    this.busy = true;
+    this.baseCandidates = [];
+    this.pickerBase = undefined;
+    this.baseTables = [];
+    this.baseViews = [];
+    this.baseLookupMessage = "正在飞书中查找…";
+    this.render();
+    try {
+      const result = await this.suite.findFeishuBases(this.baseQuery);
+      if (result.kind === "resolved") {
+        this.addBaseSelection(result.selection);
+        this.baseQuery = "";
+        this.baseLookupMessage = `已添加：${result.selection.label}`;
+      } else {
+        this.baseCandidates = result.candidates;
+        this.baseLookupMessage = result.candidates.length === 1 ? "找到 1 个结果，请选择" : `找到 ${result.candidates.length} 个结果，请选择`;
+      }
+    } catch (error) {
+      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      new Notice(this.baseLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private async browseRecentBases(): Promise<void> {
+    this.busy = true;
+    this.baseCandidates = [];
+    this.pickerBase = undefined;
+    this.baseTables = [];
+    this.baseViews = [];
+    this.baseLookupMessage = "正在读取最近使用的多维表格…";
+    this.render();
+    try {
+      this.baseCandidates = await this.suite.listRecentFeishuBases();
+      this.baseLookupMessage = `找到 ${this.baseCandidates.length} 个最近使用的多维表格，请选择`;
+    } catch (error) {
+      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      new Notice(this.baseLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private async chooseBase(candidate: FeishuBaseCandidate): Promise<void> {
+    this.busy = true;
+    this.pickerBase = candidate;
+    this.baseCandidates = [];
+    this.baseTables = [];
+    this.baseViews = [];
+    this.baseLookupMessage = "正在读取数据表和视图…";
+    this.render();
+    try {
+      this.baseTables = await this.suite.listFeishuBaseTables(candidate.baseToken);
+      this.selectedTableId = this.baseTables[0]?.id || "";
+      await this.loadViews();
+      this.baseLookupMessage = "请选择数据表和视图，然后添加";
+    } catch (error) {
+      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      new Notice(this.baseLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private async chooseTable(tableId: string): Promise<void> {
+    this.selectedTableId = tableId;
+    this.busy = true;
+    this.baseViews = [];
+    this.baseLookupMessage = "正在读取视图…";
+    this.render();
+    try {
+      await this.loadViews();
+      this.baseLookupMessage = "请选择数据表和视图，然后添加";
+    } catch (error) {
+      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      new Notice(this.baseLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+
+  private async loadViews(): Promise<void> {
+    if (!this.pickerBase || !this.selectedTableId) return;
+    this.baseViews = await this.suite.listFeishuBaseViews(this.pickerBase.baseToken, this.selectedTableId);
+    this.selectedViewId = this.baseViews[0]?.id || "";
+  }
+
+  private addPickedBase(): void {
+    if (!this.pickerBase) return;
+    const table = this.baseTables.find((item) => item.id === this.selectedTableId);
+    const view = this.baseViews.find((item) => item.id === this.selectedViewId);
+    const selection = createBaseSelection({
+      baseToken: this.pickerBase.baseToken,
+      tableId: this.selectedTableId,
+      viewId: this.selectedViewId,
+      label: readableSelectionLabel(this.pickerBase.title, table?.name || "数据表", view?.name || "视图")
+    });
+    this.addBaseSelection(selection);
+    this.baseQuery = "";
+    this.pickerBase = undefined;
+    this.baseTables = [];
+    this.baseViews = [];
+    this.baseLookupMessage = `已添加：${selection.label}`;
+    this.render();
+  }
+
+  private addBaseSelection(selection: FeishuConnectorConfig["selected_bases"][number]): void {
+    if (!this.config) return;
+    const values = this.config.selected_bases.filter((item) => item.selection_key !== selection.selection_key);
+    this.config.selected_bases = [...values, selection];
+  }
+
   private async refresh(): Promise<void> {
     this.busy = true;
     await this.suite.refreshHealth();
@@ -261,22 +458,6 @@ function parseChats(value: string): FeishuConnectorConfig["selected_chats"] {
     const query = id ? "" : /^https?:\/\//i.test(sourcePart) ? labelPart.trim() : sourcePart.trim();
     if (id || query) results.push({ selection_key: id || query, chat_id: id || "", query,
       label: labelPart === id || labelPart === sourcePart ? (query || "已选项目群") : labelPart, type: "project_group" as const });
-  }
-  return uniqueBy(results, (item) => item.selection_key);
-}
-
-function parseBases(value: string): FeishuConnectorConfig["selected_bases"] {
-  const results = [];
-  for (const line of value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
-    const parts = line.split(/\s*\|\s*/);
-    const label = parts.length >= 2 ? parts[0] || "已选 Base 视图" : "已选 Base 视图";
-    const source = parts.length >= 2 ? parts[1] || "" : line;
-    const fields = (parts[2] || "").split(/[,，]/).map((item) => item.trim()).filter(Boolean).slice(0, 40);
-    const base = source.match(/\b(?:bas|bascn)[A-Za-z0-9_-]+\b/)?.[0];
-    const table = source.match(/[?&]table=([A-Za-z0-9_-]+)/)?.[1] || source.match(/\btbl[A-Za-z0-9_-]+\b/)?.[0];
-    const view = source.match(/[?&]view=([A-Za-z0-9_-]+)/)?.[1] || source.match(/\bviw[A-Za-z0-9_-]+\b/)?.[0];
-    if (base && table && view) results.push({ selection_key: `${base}:${table}:${view}`, base_token: base, table_id: table,
-      view_id: view, label: label || "已选 Base 视图", field_ids: fields });
   }
   return uniqueBy(results, (item) => item.selection_key);
 }
