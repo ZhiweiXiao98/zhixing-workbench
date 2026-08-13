@@ -4174,9 +4174,9 @@ function reconcileExplicitWorkIdentities(events) {
   const groups = /* @__PURE__ */ new Map();
   for (const event of events) {
     if (!event.taskKey || !TASK_KINDS2.has(event.kind)) continue;
-    const identifier2 = explicitWorkIdentifier(event);
-    if (!identifier2) continue;
-    const key = `${event.projectKey}:${identifier2}`;
+    const identifier3 = explicitWorkIdentifier(event);
+    if (!identifier3) continue;
+    const key = `${event.projectKey}:${identifier3}`;
     const group = groups.get(key) ?? [];
     group.push(event);
     groups.set(key, group);
@@ -5977,6 +5977,37 @@ function stripMarkup(value) {
   return String(value || "").replace(/<[^>]*>/g, "");
 }
 
+// src/feishu-chat-picker.ts
+function parseChatCandidatesPayload(payload) {
+  const data = payload?.data ?? payload ?? {};
+  const chats = Array.isArray(data.chats) ? data.chats : Array.isArray(data.items) ? data.items : [];
+  const results = chats.filter((item) => item?.chat_mode !== "p2p" && item?.chat_status !== "dissolved").map((item) => ({
+    chatId: identifier2(item?.chat_id),
+    name: display2(item?.name || "\u672A\u547D\u540D\u7FA4\u804A"),
+    external: item?.external === true
+  })).filter((item) => item.chatId && item.name);
+  const unique3 = /* @__PURE__ */ new Map();
+  for (const item of results) if (!unique3.has(item.chatId)) unique3.set(item.chatId, item);
+  return [...unique3.values()].slice(0, 50);
+}
+function createChatSelection(candidate) {
+  const chatId = identifier2(candidate.chatId);
+  if (!chatId) throw new Error("\u8BF7\u9009\u62E9\u6709\u6548\u7684\u9879\u76EE\u7FA4");
+  return {
+    selection_key: chatId,
+    chat_id: chatId,
+    query: "",
+    label: display2(candidate.name || "\u5DF2\u9009\u9879\u76EE\u7FA4"),
+    type: "project_group"
+  };
+}
+function identifier2(value) {
+  return String(value || "").trim().replace(/[^A-Za-z0-9._:-]/g, "").slice(0, 300);
+}
+function display2(value) {
+  return String(value || "").replace(/[\r\n]+/g, " ").trim().slice(0, 300);
+}
+
 // src/feishu-settings.ts
 var MODULES = [
   ["tasks", "\u6211\u7684\u4EFB\u52A1", "\u5206\u914D\u7ED9\u6211\u7684\u4EFB\u52A1\u53CA\u72B6\u6001\u53D8\u5316"],
@@ -5998,7 +6029,9 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
   config;
   authorizationStarted = false;
   busy = false;
-  chatText = "";
+  chatQuery = "";
+  chatCandidates = [];
+  chatLookupMessage = "";
   baseQuery = "";
   baseCandidates = [];
   baseTables = [];
@@ -6016,7 +6049,6 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
   }
   async load() {
     this.config = await this.suite.getFeishuConfig();
-    this.chatText = this.config.selected_chats.map((item) => `${item.label} | ${item.chat_id || item.query || ""}`).join("\n");
     this.render();
   }
   render() {
@@ -6072,12 +6104,29 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     if (this.config?.modules.messages) {
       const group = parent.createDiv({ cls: "zhixing-feishu-selection" });
       group.createEl("h3", { text: "\u9879\u76EE\u7FA4" });
-      group.createDiv({ text: "\u6BCF\u884C\u4E00\u4E2A\uFF1A\u663E\u793A\u540D\u79F0 | \u98DE\u4E66\u7FA4\u540D\u3001\u7FA4\u94FE\u63A5\u6216 oc_ \u5F00\u5934\u7684\u7FA4 ID" });
-      const input = group.createEl("textarea", { attr: { rows: "4", placeholder: "\u53D1\u5E03\u9879\u76EE\u7FA4 | oc_fictional" } });
-      input.value = this.chatText;
+      group.createDiv({ text: "\u8F93\u5165\u7FA4\u540D\u67E5\u627E\uFF0C\u6216\u4ECE\u6700\u8FD1\u4F7F\u7528\u7684\u9879\u76EE\u7FA4\u4E2D\u76F4\u63A5\u9009\u62E9\u3002" });
+      this.renderSelectedChats(group);
+      const lookup = group.createDiv({ cls: "zhixing-feishu-chat-lookup" });
+      const input = lookup.createEl("input", { type: "text", placeholder: "\u4F8B\u5982\uFF1AAI\u7814\u53D1\u5C0F\u7EC4" });
+      input.value = this.chatQuery;
+      input.disabled = this.busy;
       input.addEventListener("input", () => {
-        this.chatText = input.value;
+        this.chatQuery = input.value;
       });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void this.lookupChat();
+        }
+      });
+      const search = lookup.createEl("button", { text: this.busy ? "\u6B63\u5728\u67E5\u627E" : "\u67E5\u627E" });
+      search.disabled = this.busy;
+      search.addEventListener("click", () => void this.lookupChat());
+      const recent = lookup.createEl("button", { text: "\u6700\u8FD1\u4F7F\u7528" });
+      recent.disabled = this.busy;
+      recent.addEventListener("click", () => void this.browseRecentChats());
+      this.renderChatCandidates(group);
+      if (this.chatLookupMessage) group.createDiv({ cls: "zhixing-feishu-chat-message", text: this.chatLookupMessage });
     }
     if (this.config?.modules.base) {
       const base = parent.createDiv({ cls: "zhixing-feishu-selection" });
@@ -6140,7 +6189,7 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     const health = this.suite.snapshot().feishu;
     const summary = parent.createDiv({ cls: "zhixing-feishu-confirm" });
     metric(summary, "\u6A21\u5757", String(Object.values(this.config?.modules || {}).filter(Boolean).length));
-    metric(summary, "\u9879\u76EE\u7FA4", String(parseChats(this.chatText).length));
+    metric(summary, "\u9879\u76EE\u7FA4", String(this.config?.selected_chats.length || 0));
     metric(summary, "Base \u89C6\u56FE", String(this.config?.selected_bases.length || 0));
     metric(summary, "\u540C\u6B65\u95F4\u9694", `${this.config?.sync_interval_minutes || 60} \u5206\u949F`);
     new import_obsidian3.Setting(parent).setName("\u5F00\u542F\u98DE\u4E66\u53EA\u8BFB\u540C\u6B65").setDesc("\u9519\u8FC7\u540C\u6B65\u540E\u4F1A\u5728 Obsidian \u4E0B\u6B21\u542F\u52A8\u65F6\u8865\u8DD1").addToggle((toggle) => toggle.setValue(Boolean(this.config?.enabled)).onChange((value) => {
@@ -6174,7 +6223,6 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
       return;
     }
     if (this.step === 2) {
-      this.config.selected_chats = parseChats(this.chatText);
       if (this.config.modules.messages && this.config.selected_chats.length === 0) {
         new import_obsidian3.Notice("\u5DF2\u5F00\u542F\u9879\u76EE\u7FA4\u6D88\u606F\uFF0C\u8BF7\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u9879\u76EE\u7FA4");
         return;
@@ -6215,6 +6263,84 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
       this.busy = false;
       this.render();
     }
+  }
+  renderSelectedChats(parent) {
+    if (!this.config?.selected_chats.length) return;
+    const selected = parent.createDiv({ cls: "zhixing-feishu-chat-selected" });
+    for (const item of this.config.selected_chats) {
+      const row = selected.createDiv();
+      (0, import_obsidian3.setIcon)(row.createSpan(), "messages-square");
+      row.createSpan({ text: item.label });
+      const remove = row.createEl("button", { attr: { "aria-label": `\u79FB\u9664 ${item.label}` } });
+      (0, import_obsidian3.setIcon)(remove, "x");
+      remove.addEventListener("click", () => {
+        if (!this.config) return;
+        this.config.selected_chats = this.config.selected_chats.filter((value) => value.selection_key !== item.selection_key);
+        this.render();
+      });
+    }
+  }
+  renderChatCandidates(parent) {
+    if (this.chatCandidates.length === 0) return;
+    const results = parent.createDiv({ cls: "zhixing-feishu-chat-results" });
+    results.createDiv({ cls: "zhixing-feishu-chat-caption", text: "\u9009\u62E9\u4E00\u4E2A\u9879\u76EE\u7FA4" });
+    for (const candidate of this.chatCandidates.slice(0, 12)) {
+      const row = results.createDiv();
+      const copy = row.createDiv();
+      copy.createEl("strong", { text: candidate.name });
+      copy.createSpan({ text: candidate.external ? "\u5916\u90E8\u7FA4" : "\u5185\u90E8\u7FA4" });
+      const choose = row.createEl("button", { text: this.isChatSelected(candidate.chatId) ? "\u5DF2\u9009\u62E9" : "\u9009\u62E9" });
+      choose.disabled = this.busy || this.isChatSelected(candidate.chatId);
+      choose.addEventListener("click", () => this.addChat(candidate));
+    }
+  }
+  async lookupChat() {
+    if (!this.chatQuery.trim()) {
+      new import_obsidian3.Notice("\u8BF7\u8F93\u5165\u9879\u76EE\u7FA4\u540D\u79F0");
+      return;
+    }
+    this.busy = true;
+    this.chatCandidates = [];
+    this.chatLookupMessage = "\u6B63\u5728\u98DE\u4E66\u4E2D\u67E5\u627E\u9879\u76EE\u7FA4\u2026";
+    this.render();
+    try {
+      this.chatCandidates = await this.suite.findFeishuChats(this.chatQuery);
+      this.chatLookupMessage = this.chatCandidates.length === 1 ? "\u627E\u5230 1 \u4E2A\u9879\u76EE\u7FA4\uFF0C\u8BF7\u9009\u62E9" : `\u627E\u5230 ${this.chatCandidates.length} \u4E2A\u9879\u76EE\u7FA4\uFF0C\u8BF7\u9009\u62E9`;
+    } catch (error) {
+      this.chatLookupMessage = error instanceof Error ? error.message : String(error);
+      new import_obsidian3.Notice(this.chatLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+  async browseRecentChats() {
+    this.busy = true;
+    this.chatCandidates = [];
+    this.chatLookupMessage = "\u6B63\u5728\u8BFB\u53D6\u6700\u8FD1\u4F7F\u7528\u7684\u9879\u76EE\u7FA4\u2026";
+    this.render();
+    try {
+      this.chatCandidates = await this.suite.listRecentFeishuChats();
+      this.chatLookupMessage = `\u627E\u5230 ${this.chatCandidates.length} \u4E2A\u6700\u8FD1\u4F7F\u7528\u7684\u9879\u76EE\u7FA4\uFF0C\u8BF7\u9009\u62E9`;
+    } catch (error) {
+      this.chatLookupMessage = error instanceof Error ? error.message : String(error);
+      new import_obsidian3.Notice(this.chatLookupMessage);
+    } finally {
+      this.busy = false;
+      this.render();
+    }
+  }
+  addChat(candidate) {
+    if (!this.config) return;
+    const selection = createChatSelection(candidate);
+    const values = this.config.selected_chats.filter((item) => item.selection_key !== selection.selection_key);
+    this.config.selected_chats = [...values, selection];
+    this.chatQuery = "";
+    this.chatLookupMessage = `\u5DF2\u6DFB\u52A0\uFF1A${selection.label}`;
+    this.render();
+  }
+  isChatSelected(chatId) {
+    return Boolean(this.config?.selected_chats.some((item) => item.chat_id === chatId));
   }
   renderSelectedBases(parent) {
     if (!this.config?.selected_bases.length) return;
@@ -6403,29 +6529,6 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
 };
 function stepTitle(step) {
   return ["\u8FDE\u63A5\u98DE\u4E66", "\u9009\u62E9\u6A21\u5757", "\u9009\u62E9\u7FA4\u804A\u4E0E Base", "\u9884\u89C8\u91C7\u96C6\u8303\u56F4", "\u786E\u8BA4\u5F00\u542F"][step] || "\u8BBE\u7F6E";
-}
-function parseChats(value) {
-  const results = [];
-  for (const line of value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
-    const [labelPart, sourcePart] = splitLine(line);
-    const id = (sourcePart.match(/\boc_[A-Za-z0-9_-]+\b/) || labelPart.match(/\boc_[A-Za-z0-9_-]+\b/))?.[0];
-    const query = id ? "" : /^https?:\/\//i.test(sourcePart) ? labelPart.trim() : sourcePart.trim();
-    if (id || query) results.push({
-      selection_key: id || query,
-      chat_id: id || "",
-      query,
-      label: labelPart === id || labelPart === sourcePart ? query || "\u5DF2\u9009\u9879\u76EE\u7FA4" : labelPart,
-      type: "project_group"
-    });
-  }
-  return uniqueBy4(results, (item) => item.selection_key);
-}
-function splitLine(value) {
-  const parts = value.split(/\s*\|\s*/, 2);
-  return parts.length === 2 ? [parts[0] || "\u5DF2\u9009\u8303\u56F4", parts[1] || ""] : [value, value];
-}
-function uniqueBy4(values, key) {
-  return [...new Map(values.map((value) => [key(value), value])).values()];
 }
 function metric(parent, label, value) {
   const item = parent.createDiv();
@@ -6785,25 +6888,25 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
     update.addEventListener("click", () => void this.suite.checkForUpdate());
   }
   renderFactualHealthChip(parent, health, icon, labels) {
-    const display2 = factualHealthDisplay(health, labels);
-    const chip = parent.createSpan({ cls: `zhixing-health-chip is-${display2.state}` });
-    (0, import_obsidian4.setIcon)(chip, display2.state === "unavailable" ? "triangle-alert" : icon);
-    chip.createSpan({ text: display2.label });
-    chip.setAttribute("title", display2.title);
+    const display3 = factualHealthDisplay(health, labels);
+    const chip = parent.createSpan({ cls: `zhixing-health-chip is-${display3.state}` });
+    (0, import_obsidian4.setIcon)(chip, display3.state === "unavailable" ? "triangle-alert" : icon);
+    chip.createSpan({ text: display3.label });
+    chip.setAttribute("title", display3.title);
   }
   renderIngestRunRow(parent, run) {
-    const display2 = ingestRunDisplay(run);
+    const display3 = ingestRunDisplay(run);
     const button = parent.createEl("button", {
       cls: "activity-ingest-row",
       attr: { type: "button", "aria-label": `\u67E5\u770B\u6574\u7406\u8BB0\u5F55\uFF1A${formatDateTime(run.startedAt)}` }
     });
     button.toggleClass("is-active", run.id === this.selectedIngestRunId);
-    const marker = button.createSpan({ cls: `activity-ingest-marker is-${display2.key}` });
-    (0, import_obsidian4.setIcon)(marker, display2.icon);
+    const marker = button.createSpan({ cls: `activity-ingest-marker is-${display3.key}` });
+    (0, import_obsidian4.setIcon)(marker, display3.icon);
     const body = button.createDiv({ cls: "activity-ingest-row-body" });
     const top = body.createDiv({ cls: "activity-ingest-row-top" });
     top.createSpan({ cls: "activity-ingest-time", text: formatDateTime(run.startedAt) });
-    top.createSpan({ cls: `activity-ingest-status is-${display2.key}`, text: display2.label });
+    top.createSpan({ cls: `activity-ingest-status is-${display3.key}`, text: display3.label });
     body.createDiv({
       cls: "activity-ingest-summary",
       text: run.source === "legacy-log" ? "\u65E7\u7248\u53EA\u4FDD\u7559\u8FD0\u884C\u6982\u8981\uFF0C\u5904\u7406\u7ED3\u679C\u4E0D\u53EF\u5B8C\u6574\u6838\u9A8C" : `\u9009\u4E2D ${run.selectedTopics} \u4E2A\u4E3B\u9898 \xB7 \u6210\u529F\u6C89\u6DC0 ${run.committedTopics} \u4E2A \xB7 \u5F85\u91CD\u8BD5/\u5931\u8D25 ${run.pendingTopics + run.failedTopics} \u4E2A \xB7 \u5269\u4F59 ${run.remainingTopics} \u4E2A`
@@ -6823,13 +6926,13 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
     });
   }
   renderIngestRunDetail(parent, run) {
-    const display2 = ingestRunDisplay(run);
+    const display3 = ingestRunDisplay(run);
     const heading = parent.createDiv({ cls: "activity-ingest-detail-heading" });
     const title = heading.createDiv();
     title.createEl("h3", { text: formatDateTime(run.startedAt) });
     title.createDiv({
       cls: "activity-artifact-detail-meta",
-      text: `${ingestTriggerLabel(run)} \xB7 ${display2.label}${run.finishedAt ? ` \xB7 \u7528\u65F6 ${durationLabel(run.startedAt, run.finishedAt)}` : ""}`
+      text: `${ingestTriggerLabel(run)} \xB7 ${display3.label}${run.finishedAt ? ` \xB7 \u7528\u65F6 ${durationLabel(run.startedAt, run.finishedAt)}` : ""}`
     });
     if (run.logPath) {
       const openLog = this.iconTextButton(heading, "scroll-text", "\u67E5\u770B\u8FD0\u884C\u6765\u6E90", "open-ingest-log");
@@ -6845,7 +6948,7 @@ var ActivityLedgerView = class extends import_obsidian4.ItemView {
         cls: "activity-artifact-attribution is-warning",
         text: "\u65E7\u7248\u8BB0\u5F55\u6CA1\u6709\u4E8B\u52A1\u7EA7\u9A8C\u8BC1\u4FE1\u606F\u3002\u8FD9\u91CC\u4E0D\u6839\u636E\u9000\u51FA\u7801\u63A8\u65AD\u6574\u7406\u6210\u529F\uFF0C\u7ED3\u679C\u8BF7\u4EE5\u6210\u679C\u548C Wiki \u5B9E\u9645\u5185\u5BB9\u4E3A\u51C6\u3002"
       });
-    } else if (display2.key === "stalled") {
+    } else if (display3.key === "stalled") {
       parent.createDiv({
         cls: "activity-artifact-attribution is-warning",
         text: "\u8FD9\u6B21\u6574\u7406\u957F\u65F6\u95F4\u6CA1\u6709\u7ED3\u675F\u8BB0\u5F55\uFF0C\u53EF\u80FD\u88AB\u4E2D\u65AD\u3002\u672A\u6210\u529F\u5199\u5165\u7684\u5185\u5BB9\u4F1A\u4FDD\u7559\u5728\u961F\u5217\u4E2D\u7B49\u5F85\u91CD\u8BD5\u3002"
@@ -9161,6 +9264,44 @@ var SuiteService = class {
 `);
     await this.refreshHealth();
     return config;
+  }
+  async findFeishuChats(value) {
+    const query = value.trim();
+    if (!query) throw new Error("\u8BF7\u8F93\u5165\u9879\u76EE\u7FA4\u540D\u79F0");
+    const result2 = await executeLarkCli([
+      "im",
+      "+chat-search",
+      "--as",
+      "user",
+      "--query",
+      query.slice(0, 64),
+      "--search-types",
+      "private,public_joined,external",
+      "--page-size",
+      "20",
+      "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const candidates = parseChatCandidatesPayload(parseCommandJson(`${result2.stdout}
+${result2.stderr}`));
+    if (candidates.length === 0) throw new Error("\u6CA1\u6709\u627E\u5230\u5339\u914D\u7684\u9879\u76EE\u7FA4\uFF0C\u8BF7\u6362\u4E00\u4E2A\u66F4\u51C6\u786E\u7684\u540D\u79F0");
+    return candidates;
+  }
+  async listRecentFeishuChats() {
+    const result2 = await executeLarkCli([
+      "im",
+      "+chat-list",
+      "--as",
+      "user",
+      "--sort",
+      "active_time",
+      "--page-size",
+      "20",
+      "--json"
+    ], feishuReadOptions(), this.larkExecutable);
+    const candidates = parseChatCandidatesPayload(parseCommandJson(`${result2.stdout}
+${result2.stderr}`));
+    if (candidates.length === 0) throw new Error("\u6CA1\u6709\u627E\u5230\u6700\u8FD1\u4F7F\u7528\u7684\u9879\u76EE\u7FA4\uFF0C\u53EF\u4EE5\u8F93\u5165\u7FA4\u540D\u7EE7\u7EED\u67E5\u627E");
+    return candidates;
   }
   async findFeishuBases(value) {
     const query = value.trim();
