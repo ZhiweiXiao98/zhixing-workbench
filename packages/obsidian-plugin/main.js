@@ -8118,6 +8118,7 @@ async function runDueKnowledgeCycle(options) {
     readJson(import_node_path9.default.join(vault, "raw", "codex", "automation", "last-cycle.json"), null),
     readJson(import_node_path9.default.join(vault, "raw", "codex", "ingest-status.json"), null)
   ]);
+  state = await repairLegacyFailedSchedule({ vault, state, lastCycle, queue, newActivity: options.newActivity, now });
   const decision = evaluateSchedule({
     now,
     state,
@@ -8127,6 +8128,7 @@ async function runDueKnowledgeCycle(options) {
     executorReady: options.executorReady
   });
   if (!decision.due) {
+    if (decision.reason === "already-running") return { ran: false, ok: true, reason: decision.reason, state };
     state = await markScheduleIdle({ vault, state, now, nextDue: decision.next_due });
     return { ran: false, ok: true, reason: decision.reason, state };
   }
@@ -8143,15 +8145,16 @@ async function runDueKnowledgeCycle(options) {
 function evaluateSchedule(options) {
   const now = toDate2(options.now);
   const state = normalizeState2(options.state, now);
-  const lastSuccess = validIso2(state.last_success) || validIso2(options.lastCycle?.finished_at);
+  const lastSuccess = validIso2(state.last_success) || successfulCycleTime(options.lastCycle);
   const readyTopics = Math.max(0, Number(options.queue?.ready_topics ?? options.queue?.candidate_topics ?? 0));
   const hasWork = readyTopics > 0 || Boolean(options.newActivity);
-  if (!options.executorReady) return { due: false, reason: "executor-unavailable", next_due: futureDue(state.next_due, now) };
   if (state.status === "running") return { due: false, reason: "already-running", next_due: state.next_due };
+  if (!options.executorReady) return state.status === "backoff" ? { due: false, reason: "executor-unavailable", next_due: backoffProbeDue(state.next_due, now) } : { due: false, reason: "executor-unavailable", next_due: futureDue(state.next_due, now) };
   if (state.next_due && state.status === "backoff" && Date.parse(state.next_due) > now.getTime()) {
     return { due: false, reason: "backoff", next_due: state.next_due };
   }
   if (!hasWork) return { due: false, reason: "queue-empty", next_due: nextDailyDue(now).toISOString() };
+  if (state.status === "backoff") return { due: true, reason: "retry-after-backoff", next_due: null };
   if (!lastSuccess) return { due: true, reason: options.newActivity ? "first-activity-catchup" : "first-startup-catchup", next_due: null };
   const today = localDate(now);
   const lastDate = localDate(new Date(lastSuccess));
@@ -8163,8 +8166,11 @@ function evaluateSchedule(options) {
 async function markScheduleIdle(options) {
   const now = toDate2(options.now);
   const state = normalizeState2(options.state, now);
-  const keepBackoff = state.status === "backoff" && Boolean(state.next_due && Date.parse(state.next_due) > now.getTime());
-  const nextDue = keepBackoff ? state.next_due : validIso2(options.nextDue) || nextDailyDue(now).toISOString();
+  const requestedDue = validIso2(options.nextDue);
+  const keepBackoff = state.status === "backoff" && Boolean(
+    state.next_due && Date.parse(state.next_due) > now.getTime() || requestedDue && Date.parse(requestedDue) > now.getTime()
+  );
+  const nextDue = keepBackoff ? laterFutureDue(state.next_due, requestedDue, now) : requestedDue || nextDailyDue(now).toISOString();
   const updated = { ...state, status: keepBackoff ? "backoff" : "idle", next_due: nextDue };
   const target = schedulePath(options.vault);
   if (JSON.stringify(updated) !== JSON.stringify(state) || !await exists(target)) await atomicJson(target, updated);
@@ -8203,13 +8209,34 @@ async function finishScheduleAttempt(options) {
     return updated2;
   }
   const failureCount = Math.max(1, Number(state.failure_count || 0) + 1);
-  const delay = Math.min(MAX_RETRY_MS, BASE_RETRY_MS * 2 ** Math.min(failureCount - 1, 8));
+  const delay = retryDelay(failureCount);
   const updated = {
     ...state,
     last_attempt: state.last_attempt || now.toISOString(),
     next_due: new Date(now.getTime() + delay).toISOString(),
     status: "backoff",
     error: safeError3(options.error),
+    failure_count: failureCount,
+    owner_pid: null
+  };
+  await atomicJson(schedulePath(options.vault), updated);
+  return updated;
+}
+async function repairLegacyFailedSchedule(options) {
+  const state = normalizeState2(options.state, options.now);
+  const failure = failedCycleEvidence(options.lastCycle);
+  const readyTopics = Math.max(0, Number(options.queue?.ready_topics ?? options.queue?.candidate_topics ?? 0));
+  const lastSuccess = validIso2(state.last_success);
+  const failureIsCovered = lastSuccess && Date.parse(lastSuccess) >= Date.parse(failure?.finished_at || "");
+  if (!failure || failureIsCovered || state.status === "running" || state.status === "backoff" || readyTopics === 0 && !options.newActivity) return state;
+  const failureCount = Math.max(1, Number(state.failure_count || 0));
+  const attemptedAt = [validIso2(state.last_attempt), failure.finished_at].filter(Boolean).map((value) => Date.parse(value));
+  const retryBase = attemptedAt.length > 0 ? Math.max(...attemptedAt) : toDate2(options.now).getTime();
+  const updated = {
+    ...state,
+    status: "backoff",
+    next_due: new Date(retryBase + retryDelay(failureCount)).toISOString(),
+    error: state.error || `\u4E0A\u6B21\u6574\u7406\u72B6\u6001\u4E3A ${failure.status}\uFF0C\u5C06\u81EA\u52A8\u91CD\u8BD5`,
     failure_count: failureCount,
     owner_pid: null
   };
@@ -8244,6 +8271,29 @@ function nextDailyDue(now) {
 }
 function futureDue(value, now) {
   return value && Date.parse(value) > now.getTime() ? value : nextDailyDue(now).toISOString();
+}
+function backoffProbeDue(value, now) {
+  return value && Date.parse(value) > now.getTime() ? value : new Date(now.getTime() + BASE_RETRY_MS).toISOString();
+}
+function laterFutureDue(current, requested, now) {
+  const candidates = [validIso2(current), validIso2(requested)].filter((value) => value && Date.parse(value) > now.getTime());
+  return candidates.sort((left, right) => Date.parse(right) - Date.parse(left))[0] || new Date(now.getTime() + BASE_RETRY_MS).toISOString();
+}
+function successfulCycleTime(lastCycle) {
+  const finishedAt = validIso2(lastCycle?.finished_at);
+  if (!finishedAt) return null;
+  if (lastCycle?.status === "succeeded") return finishedAt;
+  if (lastCycle?.status != null) return null;
+  const batches = Array.isArray(lastCycle?.batches) ? lastCycle.batches : [];
+  return batches.length > 0 && !lastCycle?.error && batches.every((batch) => batch?.status === "succeeded") ? finishedAt : null;
+}
+function failedCycleEvidence(lastCycle) {
+  const status = String(lastCycle?.status || "");
+  const finishedAt = validIso2(lastCycle?.finished_at);
+  return finishedAt && ["partial", "failed", "budget-paused"].includes(status) ? { status, finished_at: finishedAt } : null;
+}
+function retryDelay(failureCount) {
+  return Math.min(MAX_RETRY_MS, BASE_RETRY_MS * 2 ** Math.min(Math.max(1, failureCount) - 1, 8));
 }
 function staleRunning(state, now) {
   if (state.status !== "running") return false;

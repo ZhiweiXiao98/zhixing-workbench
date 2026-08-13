@@ -1,6 +1,6 @@
 {
   "name": "@zhixing-workbench/runtime",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "private": true,
   "author": "肖志伟",
   "type": "module",

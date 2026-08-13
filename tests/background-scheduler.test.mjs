@@ -131,6 +131,7 @@ test("同版本重复启动只保留一个后台宿主", async () => {
 test("后台 partial 保留明细并在 backoff 到期后恢复 last_success", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "zhixing-background-retry-"));
   const vault = path.join(root, "vault");
+  const cyclePath = path.join(vault, "raw", "codex", "automation", "last-cycle.json");
   let cycles = 0;
   const common = {
     install: { vaultRoot: vault, programRoot: path.join(root, "program") },
@@ -139,22 +140,29 @@ test("后台 partial 保留明细并在 backoff 到期后恢复 last_success", a
     probeExecutor: async () => ({ supported: true, error: null }),
     cycleRunner: async () => {
       cycles += 1;
-      return cycles === 1 ? { status: "partial", batches: [{ batch_index: 2, status: "partial", failed: 1,
-        error: "虚构主题：原始事件来源与主题证据不一致" }] } : { status: "succeeded", batches: [] };
+      const summary = cycles === 1
+        ? { status: "partial", finished_at: "2026-08-13T08:00:30.000Z",
+          batches: [{ batch_index: 2, status: "partial", failed: 1,
+            error: "虚构主题：原始事件来源与主题证据不一致" }] }
+        : { status: "succeeded", finished_at: "2026-08-13T08:06:00.000Z", batches: [] };
+      await mkdir(path.dirname(cyclePath), { recursive: true });
+      await writeFile(cyclePath, JSON.stringify(summary), "utf8");
+      return summary;
     }
   };
   try {
-    const first = await runBackgroundTick({ ...common, now: new Date() });
+    const first = await runBackgroundTick({ ...common, now: "2026-08-13T08:00:00.000Z" });
     assert.equal(first.ok, false);
     assert.equal(first.background.phase, "error");
     assert.match(first.state.error, /第 2 批.*原始事件来源与主题证据不一致/);
-    const retryAt = new Date(Date.parse(first.state.next_due) + 1);
-    const retried = await runBackgroundTick({ ...common, now: retryAt });
+    assert.equal(JSON.parse(await readFile(cyclePath, "utf8")).status, "partial");
+    const retried = await runBackgroundTick({ ...common, now: first.state.next_due });
     assert.equal(retried.ok, true);
     assert.equal(retried.ran, true);
     assert.equal(retried.state.status, "succeeded");
     assert.ok(retried.state.last_success);
     assert.equal(cycles, 2);
+    assert.equal(JSON.parse(await readFile(cyclePath, "utf8")).status, "succeeded");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

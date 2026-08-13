@@ -93,7 +93,7 @@ test("安装与卸载只处理程序并保留 Vault 个人内容", async () => {
     await writeFile(extensionManifest, `${JSON.stringify(staleManifest, null, 2)}\n`, "utf8");
     await installSuite(options);
     assert.equal(await readFile(path.join(config, "device.json"), "utf8"), deviceBefore);
-    assert.equal(JSON.parse(await readFile(extensionManifest, "utf8")).version, "0.6.4");
+    assert.equal(JSON.parse(await readFile(extensionManifest, "utf8")).version, "0.6.5");
     const installedMain = path.join(vault, ".obsidian", "plugins", "zhixing-workbench", "main.js");
     await writeFile(installedMain, "stable-before-update\n", "utf8");
     await writeFile(path.join(installed.browser_extension, "service-worker.js"), "stable-extension-before-update\n", "utf8");
@@ -189,7 +189,7 @@ test("v0.6.0 未修改 Skill 与旧程序副本一致时可安全认领升级", 
     for (const skill of SKILLS) {
       const marker = JSON.parse(await readFile(path.join(fixture.codexHome, "skills", skill, ".zhixing-owner.json"), "utf8"));
       assert.equal(marker.owner, "zhixing-workbench");
-      assert.equal(marker.installed_version, "0.6.4");
+      assert.equal(marker.installed_version, "0.6.5");
     }
   } finally {
     await fixture.cleanup();
@@ -405,7 +405,7 @@ test("再次安装可修复 0.6.1 已迁移但任务状态和旧 Hook 留错的�
     assert.equal(countLegacyHooks(repairedHooks, fixture.codexHome), 0);
     assert.equal(countOwnedHooks(repairedHooks), 2);
     assert.match(JSON.stringify(repairedHooks), /bad-request-continue/);
-    assert.equal(repairedState.version, "0.6.4");
+    assert.equal(repairedState.version, "0.6.5");
     assert.equal(repairedState.legacy_migration.legacy_hooks.entries.length, 2);
     assert.deepEqual(repairedState.legacy_migration.legacy_tasks.map((item) => item.was_enabled), [true, true, true]);
 
