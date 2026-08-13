@@ -322,6 +322,87 @@
   font-family: var(--font-interface);
 }
 
+.zhixing-feishu-base-lookup {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.zhixing-feishu-base-lookup input,
+.zhixing-feishu-base-picker select {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+}
+
+.zhixing-feishu-base-selected,
+.zhixing-feishu-base-results,
+.zhixing-feishu-base-picker {
+  margin-top: 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.zhixing-feishu-base-selected > div,
+.zhixing-feishu-base-results > div:not(.zhixing-feishu-base-caption) {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 42px;
+  gap: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.zhixing-feishu-base-selected button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 5px;
+}
+
+.zhixing-feishu-base-selected svg {
+  width: 15px;
+  height: 15px;
+}
+
+.zhixing-feishu-base-results > div:not(.zhixing-feishu-base-caption) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.zhixing-feishu-base-results > div > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.zhixing-feishu-base-results span,
+.zhixing-feishu-base-caption,
+.zhixing-feishu-base-message {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.zhixing-feishu-base-caption {
+  padding: 9px 0 4px;
+}
+
+.zhixing-feishu-base-picker {
+  padding-top: 10px;
+}
+
+.zhixing-feishu-base-picker > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 8px 0;
+}
+
+.zhixing-feishu-base-message {
+  margin-top: 8px;
+}
+
 .zhixing-feishu-preview > div {
   display: grid;
   grid-template-columns: 18px minmax(100px, 0.42fr) minmax(0, 1fr);
@@ -390,6 +471,18 @@
 
   .zhixing-feishu-preview > div > span:last-child {
     grid-column: 2;
+  }
+
+  .zhixing-feishu-base-picker > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .zhixing-feishu-base-lookup {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .zhixing-feishu-base-lookup > button:last-child {
+    grid-column: 1 / -1;
   }
 }
 

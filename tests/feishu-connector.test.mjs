@@ -42,6 +42,9 @@ test("所选飞书模块一次计算只读最小权限", () => {
   assert.ok(permissions.scopes.includes("task:task:read"));
   assert.ok(permissions.scopes.includes("calendar:calendar.event:read"));
   assert.ok(permissions.scopes.includes("base:record:read"));
+  assert.ok(permissions.scopes.includes("base:table:read"));
+  assert.ok(permissions.scopes.includes("base:view:read"));
+  assert.ok(permissions.scopes.includes("search:docs:read"));
   assert.ok(permissions.scopes.includes("im:message:readonly"));
   assert.ok(permissions.scopes.includes("im:chat:read"));
   assert.equal(new Set(permissions.scopes).size, permissions.scopes.length);
