@@ -8128,6 +8128,7 @@ async function runDueKnowledgeCycle(options) {
     executorReady: options.executorReady
   });
   if (!decision.due) {
+    if (decision.reason === "already-running") return { ran: false, ok: true, reason: decision.reason, state };
     state = await markScheduleIdle({ vault, state, now, nextDue: decision.next_due });
     return { ran: false, ok: true, reason: decision.reason, state };
   }
@@ -8147,8 +8148,8 @@ function evaluateSchedule(options) {
   const lastSuccess = validIso2(state.last_success) || successfulCycleTime(options.lastCycle);
   const readyTopics = Math.max(0, Number(options.queue?.ready_topics ?? options.queue?.candidate_topics ?? 0));
   const hasWork = readyTopics > 0 || Boolean(options.newActivity);
-  if (!options.executorReady) return { due: false, reason: "executor-unavailable", next_due: futureDue(state.next_due, now) };
   if (state.status === "running") return { due: false, reason: "already-running", next_due: state.next_due };
+  if (!options.executorReady) return state.status === "backoff" ? { due: false, reason: "executor-unavailable", next_due: backoffProbeDue(state.next_due, now) } : { due: false, reason: "executor-unavailable", next_due: futureDue(state.next_due, now) };
   if (state.next_due && state.status === "backoff" && Date.parse(state.next_due) > now.getTime()) {
     return { due: false, reason: "backoff", next_due: state.next_due };
   }
@@ -8165,8 +8166,11 @@ function evaluateSchedule(options) {
 async function markScheduleIdle(options) {
   const now = toDate2(options.now);
   const state = normalizeState2(options.state, now);
-  const keepBackoff = state.status === "backoff" && Boolean(state.next_due && Date.parse(state.next_due) > now.getTime());
-  const nextDue = keepBackoff ? state.next_due : validIso2(options.nextDue) || nextDailyDue(now).toISOString();
+  const requestedDue = validIso2(options.nextDue);
+  const keepBackoff = state.status === "backoff" && Boolean(
+    state.next_due && Date.parse(state.next_due) > now.getTime() || requestedDue && Date.parse(requestedDue) > now.getTime()
+  );
+  const nextDue = keepBackoff ? laterFutureDue(state.next_due, requestedDue, now) : requestedDue || nextDailyDue(now).toISOString();
   const updated = { ...state, status: keepBackoff ? "backoff" : "idle", next_due: nextDue };
   const target = schedulePath(options.vault);
   if (JSON.stringify(updated) !== JSON.stringify(state) || !await exists(target)) await atomicJson(target, updated);
@@ -8267,6 +8271,13 @@ function nextDailyDue(now) {
 }
 function futureDue(value, now) {
   return value && Date.parse(value) > now.getTime() ? value : nextDailyDue(now).toISOString();
+}
+function backoffProbeDue(value, now) {
+  return value && Date.parse(value) > now.getTime() ? value : new Date(now.getTime() + BASE_RETRY_MS).toISOString();
+}
+function laterFutureDue(current, requested, now) {
+  const candidates = [validIso2(current), validIso2(requested)].filter((value) => value && Date.parse(value) > now.getTime());
+  return candidates.sort((left, right) => Date.parse(right) - Date.parse(left))[0] || new Date(now.getTime() + BASE_RETRY_MS).toISOString();
 }
 function successfulCycleTime(lastCycle) {
   const finishedAt = validIso2(lastCycle?.finished_at);
