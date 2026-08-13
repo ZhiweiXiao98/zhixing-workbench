@@ -54,8 +54,9 @@ export async function runBackgroundTick(options = {}) {
       }),
       runKnowledge: async (reason) => {
         if (options.runKnowledge) return options.runKnowledge({ vault, codex, reason });
-        const summary = await runCycle({ vault, codex: codex.path, trigger: "automatic" });
-        if (["failed", "partial"].includes(summary.status)) throw new Error(`后台整理返回 ${summary.status}`);
+        const cycleRunner = options.cycleRunner || runCycle;
+        const summary = await cycleRunner({ vault, codex: codex.path, trigger: "automatic" });
+        if (["failed", "partial"].includes(summary.status)) throw new Error(cycleFailureMessage(summary));
       }
     });
     const waiting = scheduled.reason === "owner-busy";
@@ -140,6 +141,14 @@ function toDate(value) {
 
 function safeError(error) {
   return String(error instanceof Error ? error.message : error || "后台调度失败").replace(/[\r\n]+/g, " ").slice(0, 500);
+}
+
+function cycleFailureMessage(summary) {
+  const failures = (summary.batches || []).filter((batch) => ["failed", "partial"].includes(batch.status))
+    .map((batch) => `第 ${batch.batch_index} 批：${batch.error || `${batch.failed || 0} 个主题未完成沉淀`}`);
+  return failures.length > 0
+    ? `后台整理未全部完成；${failures.join("；")}`.slice(0, 500)
+    : `后台整理返回 ${summary.status}`;
 }
 
 function delay(milliseconds) {

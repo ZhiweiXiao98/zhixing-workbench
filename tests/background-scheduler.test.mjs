@@ -127,3 +127,70 @@ test("同版本重复启动只保留一个后台宿主", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("后台 partial 保留明细并在 backoff 到期后恢复 last_success", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-background-retry-"));
+  const vault = path.join(root, "vault");
+  let cycles = 0;
+  const common = {
+    install: { vaultRoot: vault, programRoot: path.join(root, "program") },
+    syncDesktop: async () => ({ completed_turns: 1, last_event_at: "2026-08-13T08:00:00.000Z" }),
+    discoverCodex: async () => ({ path: "C:\\Fixture\\codex.exe", version: "codex-cli 0.147.0" }),
+    probeExecutor: async () => ({ supported: true, error: null }),
+    cycleRunner: async () => {
+      cycles += 1;
+      return cycles === 1 ? { status: "partial", batches: [{ batch_index: 2, status: "partial", failed: 1,
+        error: "虚构主题：原始事件来源与主题证据不一致" }] } : { status: "succeeded", batches: [] };
+    }
+  };
+  try {
+    const first = await runBackgroundTick({ ...common, now: new Date() });
+    assert.equal(first.ok, false);
+    assert.equal(first.background.phase, "error");
+    assert.match(first.state.error, /第 2 批.*原始事件来源与主题证据不一致/);
+    const retryAt = new Date(Date.parse(first.state.next_due) + 1);
+    const retried = await runBackgroundTick({ ...common, now: retryAt });
+    assert.equal(retried.ok, true);
+    assert.equal(retried.ran, true);
+    assert.equal(retried.state.status, "succeeded");
+    assert.ok(retried.state.last_success);
+    assert.equal(cycles, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("后台 tick 读取 Desktop fixture 后生成状态与成对增量事件", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-background-desktop-"));
+  const vault = path.join(root, "vault");
+  const codexHome = path.join(root, "codex-home");
+  const session = path.join(codexHome, "sessions", "fixture.jsonl");
+  const now = new Date();
+  const at = (offset) => new Date(now.getTime() + offset).toISOString();
+  try {
+    await mkdir(path.dirname(session), { recursive: true });
+    await writeFile(session, `${[
+      { timestamp: at(-4000), type: "session_meta", payload: { id: "desktop-fixture", cwd: "C:\\FictionalProject",
+        originator: "Codex Desktop", cli_version: "0.147.0", source: { subagent: null } } },
+      { timestamp: at(-3000), type: "event_msg", payload: { type: "task_started", turn_id: "desktop-turn" } },
+      { timestamp: at(-2000), type: "event_msg", payload: { type: "user_message", message: "验证桌面增量采集" } },
+      { timestamp: at(-1000), type: "event_msg", payload: { type: "task_complete", turn_id: "desktop-turn",
+        last_agent_message: "桌面增量采集完成" } }
+    ].map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8");
+    const result = await runBackgroundTick({
+      install: { vaultRoot: vault, programRoot: path.join(root, "program") }, codexHome, now,
+      discoverCodex: async () => ({ path: "C:\\Fixture\\codex.exe", version: "codex-cli 0.147.0" }),
+      probeExecutor: async () => ({ supported: false, error: "fixture 不执行知识整理" })
+    });
+    assert.equal(result.capture.completed_turns, 1);
+    const state = JSON.parse(await readFile(path.join(vault, "raw", "codex", "sources", "desktop-state.json"), "utf8"));
+    assert.equal(state.supported, true);
+    assert.equal(state.last_event_at, at(-1000));
+    const daily = now.toISOString().slice(0, 10);
+    const events = (await readFile(path.join(vault, "raw", "codex", "events", `${daily}.jsonl`), "utf8"))
+      .trim().split(/\r?\n/).map((line) => JSON.parse(line));
+    assert.deepEqual(events.map((item) => item.event), ["UserPromptSubmit", "Stop"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

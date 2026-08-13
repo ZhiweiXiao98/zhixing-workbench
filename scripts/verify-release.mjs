@@ -31,6 +31,7 @@ for (const asset of manifest.assets) {
     "zhixing-workbench/packages/runtime/src/automation-owner.mjs",
     "zhixing-workbench/packages/runtime/src/runtime-lock.mjs",
     "zhixing-workbench/packages/runtime/src/run-cycle.mjs",
+    "zhixing-workbench/packages/runtime/src/knowledge-transaction.mjs",
     "zhixing-workbench/packages/runtime/src/feishu-cli.mjs",
     "zhixing-workbench/packages/runtime/src/feishu-sync.mjs",
     "zhixing-workbench/.codex-plugin/plugin.json"

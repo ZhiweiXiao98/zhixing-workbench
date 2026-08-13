@@ -574,7 +574,15 @@ async function commitRun(vaultRoot, options) {
     finalError,
     counts
   );
-  return { ...counts, final_status: finalStatus };
+  return {
+    ...counts,
+    final_status: finalStatus,
+    failures: historyResults.filter((item) => item.status === "failed").slice(0, 8).map((item) => ({
+      id: item.id,
+      title: item.title,
+      error: item.error
+    }))
+  };
 }
 
 async function compileCurrentQueue(vaultRoot, contract, processed, settlements) {
