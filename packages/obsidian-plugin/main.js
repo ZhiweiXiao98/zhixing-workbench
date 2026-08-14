@@ -9351,6 +9351,7 @@ var SuiteService = class {
   health;
   scheduleTimer;
   feishuDeviceCode = "";
+  nodeExecutable;
   codexExecutable;
   larkExecutable;
   scheduledWork;
@@ -9414,7 +9415,7 @@ var SuiteService = class {
     }
   }
   async runKnowledgeNow() {
-    if (!this.programRoot || !this.health.organizer.executor.supported || this.health.running) {
+    if (!this.programRoot || !this.nodeExecutable || !this.health.organizer.executor.supported || this.health.running) {
       if (!this.health.running) new import_obsidian5.Notice("\u77E5\u8BC6\u6574\u7406\u6267\u884C\u5668\u5C1A\u672A\u5C31\u7EEA\uFF0C\u8BF7\u5728\u72B6\u6001\u63D0\u793A\u4E2D\u67E5\u770B\u539F\u56E0");
       return;
     }
@@ -9426,10 +9427,9 @@ var SuiteService = class {
       onAcquired: async () => this.setHealth({ running: true }),
       runKnowledge: async () => {
         await this.runFeishuSyncNow(false);
-        await execFileAsync4(process.execPath, [runner, "--vault", vault, "--trigger", "manual"], {
+        await execFileAsync4(this.nodeExecutable, [runner, "--vault", vault, "--trigger", "manual"], {
           env: {
             ...process.env,
-            ELECTRON_RUN_AS_NODE: "1",
             ZHIXING_CAPTURE_DISABLED: "1",
             ...this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}
           },
@@ -9473,11 +9473,11 @@ var SuiteService = class {
     const runtimeHealth = {
       source_type: "knowledge_runtime_v1",
       configured: Boolean(this.programRoot),
-      supported: Boolean(this.programRoot),
-      last_seen_at: this.programRoot ? now : null,
+      supported: Boolean(this.programRoot && this.nodeExecutable),
+      last_seen_at: this.programRoot && this.nodeExecutable ? now : null,
       last_event_at: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : null,
       stale: false,
-      error: this.programRoot ? null : "\u77E5\u884C\u53F0\u77E5\u8BC6\u8FD0\u884C\u65F6\u7F3A\u5931"
+      error: !this.programRoot ? "\u77E5\u884C\u53F0\u77E5\u8BC6\u8FD0\u884C\u65F6\u7F3A\u5931" : this.nodeExecutable ? null : "\u77E5\u884C\u53F0\u8FD0\u884C\u7A0B\u5E8F\u7F3A\u5931\uFF0C\u8BF7\u91CD\u65B0\u5B89\u88C5\u77E5\u884C\u53F0"
     };
     const executorHealth = {
       source_type: "codex_exec_v1",
@@ -9711,16 +9711,19 @@ ${result2.stderr}`);
   }
   async runFeishuSyncNow(notify = true) {
     if (!this.programRoot || this.health.feishu.syncing) return;
+    if (!this.nodeExecutable) {
+      if (notify) new import_obsidian5.Notice("\u98DE\u4E66\u540C\u6B65\u7A0B\u5E8F\u7F3A\u5931\uFF0C\u8BF7\u91CD\u65B0\u5B89\u88C5\u77E5\u884C\u53F0");
+      return;
+    }
     const config = await this.getFeishuConfig();
     if (!config.enabled) return;
     const runner = import_node_path12.default.join(this.programRoot, "runtime", "feishu-cli.mjs");
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "\u6B63\u5728\u540C\u6B65\u98DE\u4E66" } });
     let syncResult = null;
     try {
-      const execution = await execFileAsync4(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
+      const execution = await execFileAsync4(this.nodeExecutable, [runner, "--vault", this.vaultBasePath(), "--force"], {
         env: {
           ...process.env,
-          ELECTRON_RUN_AS_NODE: "1",
           ZHIXING_CAPTURE_DISABLED: "1",
           ...this.larkExecutable ? { LARK_CLI_BIN: this.larkExecutable } : {}
         },
@@ -9864,6 +9867,7 @@ ${String(error?.stderr || "")}`);
   }
   async findProgramRoot() {
     const install = await readJson2(import_node_path12.default.join(configRoot(), "install.json"), null);
+    this.nodeExecutable = typeof install?.node_path === "string" && install.node_path.trim() ? install.node_path : void 0;
     if (typeof install?.program_root === "string") {
       const runner = import_node_path12.default.join(install.program_root, "runtime", "run-cycle.mjs");
       try {
@@ -9899,7 +9903,7 @@ ${String(error?.stderr || "")}`);
         if (!this.programRoot) throw new Error("\u77E5\u884C\u53F0\u77E5\u8BC6\u8FD0\u884C\u65F6\u7F3A\u5931");
         this.setHealth({ running: true });
         try {
-          await execFileAsync4(process.execPath, [
+          await execFileAsync4(this.nodeExecutable, [
             import_node_path12.default.join(this.programRoot, "runtime", "run-cycle.mjs"),
             "--vault",
             vault,
@@ -9908,7 +9912,6 @@ ${String(error?.stderr || "")}`);
           ], {
             env: {
               ...process.env,
-              ELECTRON_RUN_AS_NODE: "1",
               ZHIXING_CAPTURE_DISABLED: "1",
               ...this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}
             },

@@ -152,6 +152,7 @@ export class SuiteService {
   private health: SuiteHealth;
   private scheduleTimer?: number;
   private feishuDeviceCode = "";
+  private nodeExecutable?: string;
   private codexExecutable?: string;
   private larkExecutable?: string;
   private scheduledWork?: Promise<void>;
@@ -248,7 +249,7 @@ export class SuiteService {
   }
 
   async runKnowledgeNow(): Promise<void> {
-    if (!this.programRoot || !this.health.organizer.executor.supported || this.health.running) {
+    if (!this.programRoot || !this.nodeExecutable || !this.health.organizer.executor.supported || this.health.running) {
       if (!this.health.running) new Notice("知识整理执行器尚未就绪，请在状态提示中查看原因");
       return;
     }
@@ -260,8 +261,8 @@ export class SuiteService {
       onAcquired: async () => this.setHealth({ running: true }),
       runKnowledge: async () => {
         await this.runFeishuSyncNow(false);
-        await execFileAsync(process.execPath, [runner, "--vault", vault, "--trigger", "manual"], {
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+        await execFileAsync(this.nodeExecutable!, [runner, "--vault", vault, "--trigger", "manual"], {
+          env: { ...process.env, ZHIXING_CAPTURE_DISABLED: "1",
             ...(this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}) },
           timeout: 6 * 60 * 60_000,
           windowsHide: true,
@@ -304,11 +305,12 @@ export class SuiteService {
     const runtimeHealth: FactualHealth = {
       source_type: "knowledge_runtime_v1",
       configured: Boolean(this.programRoot),
-      supported: Boolean(this.programRoot),
-      last_seen_at: this.programRoot ? now : null,
+      supported: Boolean(this.programRoot && this.nodeExecutable),
+      last_seen_at: this.programRoot && this.nodeExecutable ? now : null,
       last_event_at: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : null,
       stale: false,
-      error: this.programRoot ? null : "知行台知识运行时缺失"
+      error: !this.programRoot ? "知行台知识运行时缺失" :
+        this.nodeExecutable ? null : "知行台运行程序缺失，请重新安装知行台"
     };
     const executorHealth: FactualHealth = {
       source_type: "codex_exec_v1",
@@ -511,14 +513,18 @@ export class SuiteService {
 
   async runFeishuSyncNow(notify = true): Promise<void> {
     if (!this.programRoot || this.health.feishu.syncing) return;
+    if (!this.nodeExecutable) {
+      if (notify) new Notice("飞书同步程序缺失，请重新安装知行台");
+      return;
+    }
     const config = await this.getFeishuConfig();
     if (!config.enabled) return;
     const runner = path.join(this.programRoot, "runtime", "feishu-cli.mjs");
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "正在同步飞书" } });
     let syncResult: FeishuSyncResult | null = null;
     try {
-      const execution = await execFileAsync(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+      const execution = await execFileAsync(this.nodeExecutable, [runner, "--vault", this.vaultBasePath(), "--force"], {
+        env: { ...process.env, ZHIXING_CAPTURE_DISABLED: "1",
           ...(this.larkExecutable ? { LARK_CLI_BIN: this.larkExecutable } : {}) },
         timeout: 30 * 60_000,
         windowsHide: true,
@@ -657,6 +663,8 @@ export class SuiteService {
 
   private async findProgramRoot(): Promise<void> {
     const install = await readJson(path.join(configRoot(), "install.json"), null);
+    this.nodeExecutable = typeof install?.node_path === "string" && install.node_path.trim()
+      ? install.node_path : undefined;
     if (typeof install?.program_root === "string") {
       const runner = path.join(install.program_root, "runtime", "run-cycle.mjs");
       try { await readFile(runner, "utf8"); this.programRoot = install.program_root; return; } catch {}
@@ -685,9 +693,9 @@ export class SuiteService {
         if (!this.programRoot) throw new Error("知行台知识运行时缺失");
         this.setHealth({ running: true });
         try {
-          await execFileAsync(process.execPath, [path.join(this.programRoot, "runtime", "run-cycle.mjs"),
+          await execFileAsync(this.nodeExecutable!, [path.join(this.programRoot, "runtime", "run-cycle.mjs"),
             "--vault", vault, "--trigger", "automatic"], {
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+            env: { ...process.env, ZHIXING_CAPTURE_DISABLED: "1",
               ...(this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}) },
             timeout: 6 * 60 * 60_000,
             windowsHide: true,

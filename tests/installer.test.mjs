@@ -78,6 +78,7 @@ test("安装与卸载只处理程序并保留 Vault 个人内容", async () => {
     assert.equal(installed.ok, true);
     assert.equal(installed.browser_extension, path.join(config, "browser-extension"));
     assert.equal(installed.background_scheduler.installed, true);
+    assert.equal(JSON.parse(await readFile(path.join(config, "install.json"), "utf8")).node_path, process.execPath);
     assert.equal((await stat(installed.background_scheduler.entry_path)).isFile(), true);
     assert.equal(JSON.parse(await readFile(path.join(installed.browser_extension, "manifest.json"), "utf8")).version, installed.version);
     assert.equal(await readFile(agents, "utf8"), "# 我自己的规则\n");
