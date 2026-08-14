@@ -266,7 +266,8 @@
 .zhixing-feishu-empty,
 .zhixing-feishu-warning,
 .zhixing-feishu-privacy,
-.zhixing-feishu-authorization-gate {
+.zhixing-feishu-authorization-gate,
+.zhixing-feishu-app-permission {
   display: flex;
   align-items: flex-start;
   gap: 9px;
@@ -306,6 +307,30 @@
   grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   border-left-color: var(--interactive-accent);
+}
+
+.zhixing-feishu-app-permission {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  border-left-color: var(--color-orange);
+}
+
+.zhixing-feishu-app-permission > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.zhixing-feishu-app-permission > div > span {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.zhixing-feishu-app-permission > div:last-child {
+  flex-direction: row;
+  gap: 7px;
 }
 
 .zhixing-feishu-authorization-gate > div {
@@ -509,11 +534,13 @@
     grid-column: 2;
   }
 
-  .zhixing-feishu-authorization-gate {
+  .zhixing-feishu-authorization-gate,
+  .zhixing-feishu-app-permission {
     grid-template-columns: 18px minmax(0, 1fr);
   }
 
-  .zhixing-feishu-authorization-gate > button {
+  .zhixing-feishu-authorization-gate > button,
+  .zhixing-feishu-app-permission > div:last-child {
     grid-column: 2;
     justify-self: start;
   }

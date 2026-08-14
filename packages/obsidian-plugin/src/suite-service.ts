@@ -29,8 +29,10 @@ import {
   type FeishuChatCandidate
 } from "./feishu-chat-picker";
 import {
+  safeFeishuPermissionUrl,
   parseFeishuCliPayload,
   readFeishuUserAuthorization,
+  withFeishuAppPermissionScopes,
   type FeishuUserAuthorizationState
 } from "./feishu-cli-result";
 
@@ -436,21 +438,35 @@ export class SuiteService {
   }
 
   async listFeishuBaseTables(baseToken: string): Promise<FeishuBaseTable[]> {
-    const result = await executeLarkCli([
-      "base", "+base-block-list", "--base-token", baseToken, "--type", "table", "--as", "user", "--json"
-    ], feishuReadOptions(), this.larkExecutable);
-    const tables = parseBaseTablesPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
-    if (tables.length === 0) throw new Error("这个多维表格中没有可选择的数据表");
-    return tables;
+    try {
+      const result = await executeLarkCli([
+        "base", "+table-list", "--base-token", baseToken, "--as", "user", "--json"
+      ], feishuReadOptions(), this.larkExecutable);
+      const tables = parseBaseTablesPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
+      if (tables.length === 0) throw new Error("这个多维表格中没有可选择的数据表");
+      return tables;
+    } catch (error) {
+      throw withFeishuAppPermissionScopes(error, baseReadScopes(), "飞书应用尚未开通多维表格只读权限");
+    }
   }
 
   async listFeishuBaseViews(baseToken: string, tableId: string): Promise<FeishuBaseView[]> {
-    const result = await executeLarkCli([
-      "base", "+view-list", "--base-token", baseToken, "--table-id", tableId, "--as", "user", "--json"
-    ], feishuReadOptions(), this.larkExecutable);
-    const views = parseBaseViewsPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
-    if (views.length === 0) throw new Error("这个数据表中没有可选择的视图");
-    return views;
+    try {
+      const result = await executeLarkCli([
+        "base", "+view-list", "--base-token", baseToken, "--table-id", tableId, "--as", "user", "--json"
+      ], feishuReadOptions(), this.larkExecutable);
+      const views = parseBaseViewsPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
+      if (views.length === 0) throw new Error("这个数据表中没有可选择的视图");
+      return views;
+    } catch (error) {
+      throw withFeishuAppPermissionScopes(error, baseReadScopes(), "飞书应用尚未开通多维表格只读权限");
+    }
+  }
+
+  async openFeishuPermissionPage(value: string): Promise<void> {
+    const url = safeFeishuPermissionUrl(value);
+    if (!url) throw new Error("飞书没有返回可用的官方权限页面");
+    await shell.openExternal(url);
   }
 
   async beginFeishuAuthorization(config: FeishuConnectorConfig): Promise<FeishuAuthorization> {
@@ -898,6 +914,10 @@ function normalizeFeishuConfig(value: any): FeishuConnectorConfig {
 function feishuScopes(config: FeishuConnectorConfig): string[] {
   return [...new Set(Object.entries(config.modules).filter(([, enabled]) => enabled)
     .flatMap(([module]) => FEISHU_SCOPE_MAP[module] || []))].sort();
+}
+
+function baseReadScopes(): string[] {
+  return (FEISHU_SCOPE_MAP.base || []).filter((scope) => scope.startsWith("base:"));
 }
 
 async function countPendingFeishu(vault: string): Promise<number> {

@@ -1,6 +1,6 @@
 {
   "name": "zhixing-workbench",
-  "version": "0.6.9",
+  "version": "0.6.10",
   "private": true,
   "description": "跨平台的 Obsidian 知识工作台、自动采集与长期知识沉淀套件",
   "author": "肖志伟",

@@ -71,9 +71,13 @@ export function parseBaseLookupPayload(payload: any): FeishuBaseLookup {
 
 export function parseBaseTablesPayload(payload: any): FeishuBaseTable[] {
   const data = payload?.data ?? payload ?? {};
-  return (Array.isArray(data.blocks) ? data.blocks : [])
-    .filter((item: any) => item?.type === "table")
-    .map((item: any) => ({ id: identifier(item?.id), name: display(item?.name || "未命名数据表") }))
+  const items = Array.isArray(data.items) ? data.items : Array.isArray(data.tables) ? data.tables : Array.isArray(data.blocks) ? data.blocks : [];
+  return items
+    .filter((item: any) => !item?.type || item.type === "table")
+    .map((item: any) => ({
+      id: identifier(item?.table_id || item?.id),
+      name: display(item?.name || item?.table_name || "未命名数据表")
+    }))
     .filter((item: FeishuBaseTable) => item.id)
     .slice(0, 100);
 }

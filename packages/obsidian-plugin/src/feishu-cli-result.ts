@@ -1,7 +1,7 @@
-export type FeishuCliIssue = "authorization_required" | "authorization_pending" | "permission" | "rate_limit" | "other";
+export type FeishuCliIssue = "authorization_required" | "authorization_pending" | "app_permission_required" | "permission" | "rate_limit" | "other";
 
 export class FeishuCliError extends Error {
-  constructor(message: string, readonly issue: FeishuCliIssue) {
+  constructor(message: string, readonly issue: FeishuCliIssue, readonly actionUrl = "") {
     super(message);
     this.name = "FeishuCliError";
   }
@@ -47,11 +47,50 @@ export function isFeishuAuthorizationRequired(error: unknown): boolean {
   return error instanceof FeishuCliError && error.issue === "authorization_required";
 }
 
+export function feishuAppPermissionUrl(error: unknown): string {
+  return error instanceof FeishuCliError && error.issue === "app_permission_required"
+    ? error.actionUrl
+    : "";
+}
+
+export function withFeishuAppPermissionScopes(error: unknown, scopes: string[], message: string): unknown {
+  if (!(error instanceof FeishuCliError) || error.issue !== "app_permission_required") return error;
+  return new FeishuCliError(message, error.issue, expandFeishuPermissionUrl(error.actionUrl, scopes));
+}
+
+export function expandFeishuPermissionUrl(value: unknown, scopes: string[]): string {
+  const safe = safeFeishuPermissionUrl(value);
+  if (!safe) return "";
+  const url = new URL(safe);
+  const normalized = [...new Set(scopes.map((scope) => scope.trim()).filter((scope) => /^[a-z][a-z0-9_.:-]{1,100}$/i.test(scope)))];
+  if (normalized.length > 0) url.searchParams.set("scopes", normalized.join(","));
+  return url.toString();
+}
+
+export function safeFeishuPermissionUrl(value: unknown): string {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:") return "";
+    if (!new Set(["open.feishu.cn", "open.larksuite.com"]).has(url.hostname.toLowerCase())) return "";
+    if (url.pathname !== "/page/scope-apply") return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
 function cliError(error: any): FeishuCliError {
   const type = String(error?.type || "").toLowerCase();
   const subtype = String(error?.subtype || "").toLowerCase();
   const message = String(error?.message || "").toLowerCase();
   const combined = `${type} ${subtype} ${message}`;
+  if (/app_scope_not_applied/.test(combined)) {
+    return new FeishuCliError(
+      "飞书应用尚未开通所选内容的只读权限",
+      "app_permission_required",
+      safeFeishuPermissionUrl(error?.console_url || error?.consoleUrl)
+    );
+  }
   if (/token_missing|need_user_authorization|missing_scope|authorization_required|user identity.*missing/.test(combined)) {
     return new FeishuCliError("需要先授权飞书，才能查找群聊和多维表格", "authorization_required");
   }

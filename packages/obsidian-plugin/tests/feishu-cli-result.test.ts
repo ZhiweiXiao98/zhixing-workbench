@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  expandFeishuPermissionUrl,
+  feishuAppPermissionUrl,
   isFeishuAuthorizationRequired,
   parseFeishuCliPayload,
   readFeishuUserAuthorization
@@ -39,5 +41,33 @@ describe("飞书命令结果", () => {
       ok: false,
       error: { type: "unexpected", message: "internal user ou_private and token detail" }
     }))).toThrow("飞书暂时无法完成这次只读查询，请稍后重试");
+  });
+
+  it("把未开通的应用权限变成安全的飞书官方操作入口", () => {
+    let received: unknown;
+    try {
+      parseFeishuCliPayload(JSON.stringify({
+        ok: false,
+        error: {
+          type: "authorization",
+          subtype: "app_scope_not_applied",
+          message: "app private_id has not applied scope base:table:read",
+          console_url: "https://open.feishu.cn/page/scope-apply?clientID=private_id&scopes=base%3Atable%3Aread"
+        }
+      }));
+    } catch (error) {
+      received = error;
+    }
+    expect((received as Error).message).toBe("飞书应用尚未开通所选内容的只读权限");
+    expect(feishuAppPermissionUrl(received)).toContain("https://open.feishu.cn/page/scope-apply?");
+    const expanded = expandFeishuPermissionUrl(feishuAppPermissionUrl(received), [
+      "base:table:read", "base:view:read", "base:record:read"
+    ]);
+    expect(new URL(expanded).searchParams.get("scopes")).toBe("base:table:read,base:view:read,base:record:read");
+  });
+
+  it("拒绝把非飞书官方网址作为权限入口", () => {
+    expect(expandFeishuPermissionUrl("https://example.com/page/scope-apply?clientID=x", ["base:table:read"]))
+      .toBe("");
   });
 });
