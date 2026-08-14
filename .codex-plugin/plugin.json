@@ -1,6 +1,6 @@
 {
   "name": "zhixing-workbench",
-  "version": "0.6.15",
+  "version": "0.6.16",
   "description": "在 Codex 中检索、回顾、安装、诊断和更新本地知行台套件。",
   "author": {
     "name": "肖志伟"

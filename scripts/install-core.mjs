@@ -22,7 +22,7 @@ const LEGACY_TASK_NAMES = [
   "Codex - Obsidian Daily Ingest"
 ];
 
-export const VERSION = "0.6.15";
+export const VERSION = "0.6.16";
 export const OWNED_SKILLS = ["obsidian-knowledge", "investigate-work-history", "zhixing-manager"];
 
 export async function installSuite(options = {}) {
@@ -340,6 +340,7 @@ async function assembleProgram(sourceRoot, target) {
   await mkdir(path.join(target, "scripts"), { recursive: true });
   await cp(path.join(sourceRoot, "scripts", "zhixing.mjs"), path.join(target, "scripts", "zhixing.mjs"));
   await cp(path.join(sourceRoot, "scripts", "install-core.mjs"), path.join(target, "scripts", "install-core.mjs"));
+  await cp(path.join(sourceRoot, "scripts", "release-archive.mjs"), path.join(target, "scripts", "release-archive.mjs"));
   await cp(path.join(sourceRoot, "LICENSE"), path.join(target, "LICENSE"));
   await cp(path.join(sourceRoot, "README.md"), path.join(target, "README.md"));
   await copyPlugin(sourceRoot, path.join(target, "obsidian-plugin"));

@@ -45,7 +45,8 @@ try {
   const packageRoot = path.join(extracted, "zhixing-workbench");
   await runRootEntry(packageRoot, vault);
 
-  const cli = path.join(packageRoot, "scripts", "zhixing.mjs");
+  const installed = JSON.parse(await readFile(path.join(config, "install.json"), "utf8"));
+  const cli = path.join(installed.program_root, "scripts", "zhixing.mjs");
   const diagnosis = await runJson(process.execPath, [cli, "diagnose", "--vault", vault]);
   assert.equal(diagnosis.version, release.version);
   assert.equal(diagnosis.vault, "ready");

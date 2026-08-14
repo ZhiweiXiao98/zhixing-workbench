@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "知行台 · ChatGPT 采集",
-  "version": "0.6.15",
+  "version": "0.6.16",
   "description": "将 ChatGPT 当前页面的完整问答安全发送到本机知行台。",
   "author": "肖志伟",
   "minimum_chrome_version": "120",
