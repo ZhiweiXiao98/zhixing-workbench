@@ -10,7 +10,7 @@ describe("飞书一键授权流程", () => {
       complete: vi.fn(async () => { events.push("complete"); }),
       readState: vi.fn(async () => {
         events.push("read");
-        return { ready: true, label: "测试用户", message: "个人授权可用" };
+        return { ready: true, label: "测试用户", message: "个人授权可用", scopeKnown: true, grantedScopes: ["base:table:read"] };
       })
     });
 

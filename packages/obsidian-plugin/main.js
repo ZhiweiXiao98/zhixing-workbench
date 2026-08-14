@@ -6044,11 +6044,21 @@ function readFeishuUserAuthorization(payload) {
   const missing = /missing|expired|invalid|logged.?out/.test(`${status} ${tokenStatus}`);
   const ready = payload?.ok !== false && data.verified !== false && user.available !== false && !missing && (user.available === true || status === "ready" || Boolean(user.userName || user.name));
   const label = cleanLabel(user.userName || user.name || user.display_name);
+  const scopeKnown = Object.prototype.hasOwnProperty.call(user, "scope") || Object.prototype.hasOwnProperty.call(user, "scopes");
+  const rawScopes = user.scope ?? user.scopes ?? [];
+  const grantedScopes = [...new Set((Array.isArray(rawScopes) ? rawScopes : String(rawScopes).split(/[\s,]+/)).map((scope) => String(scope || "").trim()).filter((scope) => /^[a-z][a-z0-9_.:-]{1,100}$/i.test(scope)))].sort();
   return {
     ready,
     ...label ? { label } : {},
-    message: ready ? "\u4E2A\u4EBA\u6388\u6743\u53EF\u7528" : "\u9700\u8981\u5148\u5B8C\u6210\u4E2A\u4EBA\u6388\u6743\uFF0C\u624D\u80FD\u67E5\u627E\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C"
+    message: ready ? "\u4E2A\u4EBA\u6388\u6743\u53EF\u7528" : "\u9700\u8981\u5148\u5B8C\u6210\u4E2A\u4EBA\u6388\u6743\uFF0C\u624D\u80FD\u67E5\u627E\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C",
+    scopeKnown,
+    grantedScopes
   };
+}
+function missingFeishuAuthorizationScopes(state, requiredScopes) {
+  if (!state.ready || !state.scopeKnown) return [];
+  const granted = new Set(state.grantedScopes);
+  return [...new Set(requiredScopes)].filter((scope) => !granted.has(scope)).sort();
 }
 function isFeishuAuthorizationRequired(error) {
   return error instanceof FeishuCliError && error.issue === "authorization_required";
@@ -6139,6 +6149,8 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
   authorizationStarted = false;
   authorizationReady = false;
   authorizationLabel = "";
+  authorizationScopeKnown = false;
+  authorizationScopes = [];
   busy = false;
   chatQuery = "";
   chatCandidates = [];
@@ -6215,7 +6227,7 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     }
   }
   renderSelections(parent) {
-    if (!this.authorizationReady) {
+    if (!this.authorizationReady || this.missingAuthorizationScopes().length > 0) {
       this.renderAuthorizationGate(parent);
       this.renderAppPermissionAction(parent);
       parent.createDiv({ cls: "zhixing-feishu-privacy", text: "\u5B8C\u6210\u6388\u6743\u540E\uFF0C\u624D\u4F1A\u663E\u793A\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C\u9009\u62E9\u3002\u79C1\u804A\u4E0E\u672A\u9009\u62E9\u7684\u5185\u5BB9\u4E0D\u4F1A\u8FDB\u5165\u77E5\u884C\u53F0\u3002" });
@@ -6301,9 +6313,21 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     }
     const health = this.suite.snapshot().feishu;
     if (health.cli !== "missing") {
-      const auth = parent.createEl("button", { cls: "mod-cta zhixing-feishu-primary", text: this.authorizationStarted ? "\u6B63\u5728\u7B49\u5F85\u98DE\u4E66\u6388\u6743" : this.authorizationReady ? "\u8865\u5145\u6240\u9009\u6A21\u5757\u6743\u9650" : "\u8FDE\u63A5\u98DE\u4E66" });
-      auth.disabled = this.busy;
-      auth.addEventListener("click", () => void this.authorize());
+      const missingScopes = this.missingAuthorizationScopes();
+      if (this.authorizationReady && missingScopes.length === 0) {
+        const ready = parent.createDiv({ cls: "zhixing-feishu-status is-ready" });
+        (0, import_obsidian3.setIcon)(ready.createSpan(), "badge-check");
+        const copy = ready.createDiv();
+        copy.createEl("strong", { text: "\u6240\u9009\u6A21\u5757\u6743\u9650\u5DF2\u5C31\u7EEA" });
+        copy.createSpan({ text: "\u65E0\u9700\u518D\u6B21\u6388\u6743\uFF0C\u53EF\u4EE5\u76F4\u63A5\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002" });
+      } else {
+        const auth = parent.createEl("button", {
+          cls: "mod-cta zhixing-feishu-primary",
+          text: this.authorizationStarted ? "\u6B63\u5728\u7B49\u5F85\u98DE\u4E66\u6388\u6743" : this.authorizationReady ? "\u8865\u5145\u6240\u9009\u6A21\u5757\u6743\u9650" : "\u8FDE\u63A5\u98DE\u4E66"
+        });
+        auth.disabled = this.busy;
+        auth.addEventListener("click", () => void this.authorize());
+      }
     }
     this.renderAppPermissionAction(parent);
   }
@@ -6384,8 +6408,7 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
         },
         readState: async () => this.suite.getFeishuUserAuthorization()
       });
-      this.authorizationReady = status.ready;
-      this.authorizationLabel = status.label || "";
+      this.applyAuthorizationState(status);
       if (!this.authorizationReady) throw new Error("\u98DE\u4E66\u6CA1\u6709\u786E\u8BA4\u6388\u6743\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5");
       this.chatLookupMessage = "";
       this.baseLookupMessage = "";
@@ -6400,14 +6423,15 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     }
   }
   renderAuthorizationGate(parent) {
+    const supplement = this.authorizationReady && this.missingAuthorizationScopes().length > 0;
     const gate = parent.createDiv({ cls: "zhixing-feishu-authorization-gate" });
     (0, import_obsidian3.setIcon)(gate.createSpan(), "shield-check");
     const copy = gate.createDiv();
-    copy.createEl("strong", { text: this.authorizationStarted ? "\u7B49\u5F85\u98DE\u4E66\u786E\u8BA4" : "\u8FDE\u63A5\u98DE\u4E66\u540E\u9009\u62E9\u5185\u5BB9" });
-    copy.createSpan({ text: this.authorizationStarted ? "\u8BF7\u5728\u521A\u6253\u5F00\u7684\u98DE\u4E66\u5B98\u65B9\u9875\u9762\u540C\u610F\u6388\u6743\uFF0C\u5B8C\u6210\u540E\u8FD9\u91CC\u4F1A\u81EA\u52A8\u8FDE\u63A5\u3002" : "\u70B9\u51FB\u4E00\u6B21\u5373\u53EF\u6253\u5F00\u98DE\u4E66\u5B98\u65B9\u6388\u6743\u9875\u3002\u6388\u6743\u5B8C\u6210\u540E\uFF0C\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C\u9009\u62E9\u4F1A\u81EA\u52A8\u51FA\u73B0\u3002" });
+    copy.createEl("strong", { text: this.authorizationStarted ? "\u7B49\u5F85\u98DE\u4E66\u786E\u8BA4" : supplement ? "\u8865\u5145\u6240\u9009\u6A21\u5757\u6743\u9650" : "\u8FDE\u63A5\u98DE\u4E66\u540E\u9009\u62E9\u5185\u5BB9" });
+    copy.createSpan({ text: this.authorizationStarted ? "\u8BF7\u5728\u521A\u6253\u5F00\u7684\u98DE\u4E66\u5B98\u65B9\u9875\u9762\u540C\u610F\u6388\u6743\uFF0C\u5B8C\u6210\u540E\u8FD9\u91CC\u4F1A\u81EA\u52A8\u8FDE\u63A5\u3002" : supplement ? "\u5F53\u524D\u8D26\u53F7\u5DF2\u8FDE\u63A5\uFF0C\u4F46\u65B0\u9009\u62E9\u7684\u6A21\u5757\u8FD8\u7F3A\u5C11\u53EA\u8BFB\u6743\u9650\u3002\u8865\u5145\u5B8C\u6210\u540E\u4F1A\u81EA\u52A8\u7EE7\u7EED\u3002" : "\u70B9\u51FB\u4E00\u6B21\u5373\u53EF\u6253\u5F00\u98DE\u4E66\u5B98\u65B9\u6388\u6743\u9875\u3002\u6388\u6743\u5B8C\u6210\u540E\uFF0C\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C\u9009\u62E9\u4F1A\u81EA\u52A8\u51FA\u73B0\u3002" });
     const button = gate.createEl("button", {
       cls: "mod-cta",
-      text: this.authorizationStarted ? "\u6B63\u5728\u7B49\u5F85\u6388\u6743" : "\u8FDE\u63A5\u98DE\u4E66"
+      text: this.authorizationStarted ? "\u6B63\u5728\u7B49\u5F85\u6388\u6743" : supplement ? "\u8865\u5145\u6743\u9650" : "\u8FDE\u63A5\u98DE\u4E66"
     });
     button.disabled = this.busy || this.authorizationStarted;
     button.addEventListener("click", () => void this.authorize());
@@ -6415,18 +6439,37 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
   async refreshAuthorization() {
     try {
       const status = await this.suite.getFeishuUserAuthorization();
-      this.authorizationReady = status.ready;
-      this.authorizationLabel = status.label || "";
+      this.applyAuthorizationState(status);
     } catch {
       this.authorizationReady = false;
       this.authorizationLabel = "";
+      this.authorizationScopeKnown = false;
+      this.authorizationScopes = [];
     }
+  }
+  applyAuthorizationState(status) {
+    this.authorizationReady = status.ready;
+    this.authorizationLabel = status.label || "";
+    this.authorizationScopeKnown = status.scopeKnown;
+    this.authorizationScopes = status.grantedScopes;
+  }
+  missingAuthorizationScopes() {
+    if (!this.config) return [];
+    return missingFeishuAuthorizationScopes({
+      ready: this.authorizationReady,
+      label: this.authorizationLabel,
+      message: "",
+      scopeKnown: this.authorizationScopeKnown,
+      grantedScopes: this.authorizationScopes
+    }, this.suite.getRequiredFeishuScopes(this.config));
   }
   lookupError(error) {
     const permissionUrl = feishuAppPermissionUrl(error);
     if (permissionUrl) this.appPermissionUrl = permissionUrl;
     if (isFeishuAuthorizationRequired(error)) {
       this.authorizationReady = false;
+      this.authorizationScopeKnown = false;
+      this.authorizationScopes = [];
       return "\u9700\u8981\u5148\u6388\u6743\u98DE\u4E66\uFF0C\u624D\u80FD\u67E5\u627E\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C";
     }
     return error instanceof Error ? error.message : "\u98DE\u4E66\u6682\u65F6\u65E0\u6CD5\u5B8C\u6210\u8FD9\u6B21\u53EA\u8BFB\u67E5\u8BE2\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5";
@@ -9463,6 +9506,9 @@ var SuiteService = class {
     }, this.larkExecutable);
     return readFeishuUserAuthorization(parseFeishuCliPayload(`${result2.stdout}
 ${result2.stderr}`));
+  }
+  getRequiredFeishuScopes(config) {
+    return feishuScopes(config);
   }
   async saveFeishuConfig(value) {
     const config = normalizeFeishuConfig(value);

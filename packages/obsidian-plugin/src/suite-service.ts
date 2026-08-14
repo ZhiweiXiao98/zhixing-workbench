@@ -379,6 +379,10 @@ export class SuiteService {
     return readFeishuUserAuthorization(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
   }
 
+  getRequiredFeishuScopes(config: FeishuConnectorConfig): string[] {
+    return feishuScopes(config);
+  }
+
   async saveFeishuConfig(value: FeishuConnectorConfig): Promise<FeishuConnectorConfig> {
     const config = normalizeFeishuConfig(value);
     await this.ensureVaultDirectory(".zhixing");
