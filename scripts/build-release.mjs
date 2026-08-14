@@ -19,7 +19,7 @@ for (const directory of [".codex-plugin", ".agents", "assets", "skills", "hooks"
   await cp(path.join(root, directory), path.join(bundle, directory), { recursive: true });
 }
 for (const file of ["LICENSE", "README.md", "package.json"]) await cp(path.join(root, file), path.join(bundle, file));
-await copyFiles("scripts", ["zhixing.mjs", "install-core.mjs"]);
+await copyFiles("scripts", ["zhixing.mjs", "install-core.mjs", "release-archive.mjs"]);
 await copyFiles("packages/runtime", ["package.json"]);
 await cp(path.join(root, "packages", "runtime", "src"), path.join(bundle, "packages", "runtime", "src"), { recursive: true });
 await cp(path.join(root, "packages", "browser-extension"), path.join(bundle, "packages", "browser-extension"), { recursive: true });

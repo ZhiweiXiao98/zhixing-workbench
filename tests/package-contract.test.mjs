@@ -32,6 +32,15 @@ test("Release 根目录安装入口调用同目录 scripts", async () => {
   assert.doesNotMatch(unix, /\.\.\/\.\.\/scripts/);
 });
 
+test("更新器使用支持中文文件名的内置解压器", async () => {
+  const updater = await readFile("scripts/zhixing.mjs", "utf8");
+  const packager = await readFile("scripts/build-release.mjs", "utf8");
+  assert.match(updater, /import \{ extractArchive \} from "\.\/release-archive\.mjs"/);
+  assert.match(updater, /await extractArchive\(archive, extracted\)/);
+  assert.doesNotMatch(updater, /execFileAsync\("tar"/);
+  assert.match(packager, /"release-archive\.mjs"/);
+});
+
 test("Obsidian 提供稳定浏览器扩展目录入口", async () => {
   const service = await readFile("packages/obsidian-plugin/src/suite-service.ts", "utf8");
   const view = await readFile("packages/obsidian-plugin/src/view.ts", "utf8");
