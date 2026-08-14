@@ -28,6 +28,11 @@ import {
   parseChatCandidatesPayload,
   type FeishuChatCandidate
 } from "./feishu-chat-picker";
+import {
+  parseFeishuCliPayload,
+  readFeishuUserAuthorization,
+  type FeishuUserAuthorizationState
+} from "./feishu-cli-result";
 
 const execFileAsync = promisify(execFile);
 const RECEIVER_PORT = 43123;
@@ -362,6 +367,16 @@ export class SuiteService {
     }
   }
 
+  async getFeishuUserAuthorization(): Promise<FeishuUserAuthorizationState> {
+    const result = await executeLarkCli(["auth", "status", "--json", "--verify"], {
+      timeout: 30_000,
+      windowsHide: true,
+      maxBuffer: 2 * 1024 * 1024,
+      env: larkCliEnv()
+    }, this.larkExecutable);
+    return readFeishuUserAuthorization(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
+  }
+
   async saveFeishuConfig(value: FeishuConnectorConfig): Promise<FeishuConnectorConfig> {
     const config = normalizeFeishuConfig(value);
     await this.ensureVaultDirectory(".zhixing");
@@ -377,7 +392,7 @@ export class SuiteService {
       "im", "+chat-search", "--as", "user", "--query", query.slice(0, 64),
       "--search-types", "private,public_joined,external", "--page-size", "20", "--json"
     ], feishuReadOptions(), this.larkExecutable);
-    const candidates = parseChatCandidatesPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    const candidates = parseChatCandidatesPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
     if (candidates.length === 0) throw new Error("没有找到匹配的项目群，请换一个更准确的名称");
     return candidates;
   }
@@ -386,7 +401,7 @@ export class SuiteService {
     const result = await executeLarkCli([
       "im", "+chat-list", "--as", "user", "--sort", "active_time", "--page-size", "20", "--json"
     ], feishuReadOptions(), this.larkExecutable);
-    const candidates = parseChatCandidatesPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    const candidates = parseChatCandidatesPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
     if (candidates.length === 0) throw new Error("没有找到最近使用的项目群，可以输入群名继续查找");
     return candidates;
   }
@@ -398,7 +413,7 @@ export class SuiteService {
       ? ["base", "+url-resolve", "--url", query, "--as", "user", "--json"]
       : ["base", "+title-resolve", "--title", query.slice(0, 30), "--as", "user", "--json"];
     const result = await executeLarkCli(args, feishuReadOptions(), this.larkExecutable);
-    const lookup = parseBaseLookupPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    const lookup = parseBaseLookupPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
     if (lookup.kind === "resolved") {
       const views = await this.listFeishuBaseViews(lookup.selection.base_token, lookup.selection.table_id);
       const view = views.find((item) => item.id === lookup.selection.view_id);
@@ -415,7 +430,7 @@ export class SuiteService {
       "drive", "+search", "--as", "user", "--query", "", "--doc-types", "bitable",
       "--sort", "edit_time", "--page-size", "20", "--json"
     ], feishuReadOptions(), this.larkExecutable);
-    const candidates = parseRecentBasesPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    const candidates = parseRecentBasesPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
     if (candidates.length === 0) throw new Error("没有找到最近使用的多维表格，可以输入名称继续查找");
     return candidates;
   }
@@ -424,7 +439,7 @@ export class SuiteService {
     const result = await executeLarkCli([
       "base", "+base-block-list", "--base-token", baseToken, "--type", "table", "--as", "user", "--json"
     ], feishuReadOptions(), this.larkExecutable);
-    const tables = parseBaseTablesPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    const tables = parseBaseTablesPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
     if (tables.length === 0) throw new Error("这个多维表格中没有可选择的数据表");
     return tables;
   }
@@ -433,7 +448,7 @@ export class SuiteService {
     const result = await executeLarkCli([
       "base", "+view-list", "--base-token", baseToken, "--table-id", tableId, "--as", "user", "--json"
     ], feishuReadOptions(), this.larkExecutable);
-    const views = parseBaseViewsPayload(parseCommandJson(`${result.stdout}\n${result.stderr}`));
+    const views = parseBaseViewsPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
     if (views.length === 0) throw new Error("这个数据表中没有可选择的视图");
     return views;
   }
@@ -447,7 +462,7 @@ export class SuiteService {
       maxBuffer: 2 * 1024 * 1024,
       env: larkCliEnv()
     }, this.larkExecutable);
-    const payload = parseCommandJson(`${result.stdout}\n${result.stderr}`);
+    const payload = parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`);
     const verificationUrl = String(payload.verification_url || payload.data?.verification_url || "");
     const deviceCode = String(payload.device_code || payload.data?.device_code || "");
     if (!verificationUrl || !deviceCode) throw new Error("飞书没有返回可用的授权地址");
@@ -880,15 +895,6 @@ function feishuScopes(config: FeishuConnectorConfig): string[] {
     .flatMap(([module]) => FEISHU_SCOPE_MAP[module] || []))].sort();
 }
 
-function parseCommandJson(value: string): any {
-  const start = value.indexOf("{");
-  const end = value.lastIndexOf("}");
-  if (start < 0 || end < start) throw new Error("飞书 CLI 未返回 JSON");
-  const payload = JSON.parse(value.slice(start, end + 1));
-  if (payload?.ok === false) throw new Error(String(payload.error?.message || "飞书授权失败"));
-  return payload;
-}
-
 async function countPendingFeishu(vault: string): Promise<number> {
   const processed = new Set<string>();
   const ingest = await readJson(path.join(vault, "raw", "codex", "ingest-state.json"), {});
@@ -934,8 +940,8 @@ async function executeLarkCli(args: string[], options: Parameters<typeof execFil
     return { stdout: String(result.stdout || ""), stderr: String(result.stderr || "") };
   } catch (error: any) {
     const output = `${String(error?.stdout || "")}\n${String(error?.stderr || "")}`;
-    try { parseCommandJson(output); } catch (parsed) {
-      if (parsed instanceof Error && parsed.message !== "飞书 CLI 未返回 JSON") throw parsed;
+    try { parseFeishuCliPayload(output); } catch (parsed) {
+      if (parsed instanceof Error && parsed.message !== "飞书没有返回可识别的结果，请稍后重试") throw parsed;
     }
     throw new Error("飞书暂时无法完成这次只读查询，请稍后重试");
   }

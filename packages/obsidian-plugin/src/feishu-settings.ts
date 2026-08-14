@@ -11,6 +11,7 @@ import {
   createChatSelection,
   type FeishuChatCandidate
 } from "./feishu-chat-picker";
+import { isFeishuAuthorizationRequired } from "./feishu-cli-result";
 
 const MODULES = [
   ["tasks", "我的任务", "分配给我的任务及状态变化"],
@@ -27,6 +28,8 @@ export class FeishuSetupModal extends Modal {
   private step = 0;
   private config?: FeishuConnectorConfig;
   private authorizationStarted = false;
+  private authorizationReady = false;
+  private authorizationLabel = "";
   private busy = false;
   private chatQuery = "";
   private chatCandidates: FeishuChatCandidate[] = [];
@@ -55,6 +58,7 @@ export class FeishuSetupModal extends Modal {
 
   private async load(): Promise<void> {
     this.config = await this.suite.getFeishuConfig();
+    await this.refreshAuthorization();
     this.render();
   }
 
@@ -84,12 +88,13 @@ export class FeishuSetupModal extends Modal {
 
   private renderConnect(parent: HTMLElement): void {
     const health = this.suite.snapshot().feishu;
-    const status = parent.createDiv({ cls: `zhixing-feishu-status is-${health.status}` });
+    const statusKind = health.cli === "missing" ? "unavailable" : this.authorizationReady ? "ready" : "attention";
+    const status = parent.createDiv({ cls: `zhixing-feishu-status is-${statusKind}` });
     const statusIcon = status.createSpan();
-    setIcon(statusIcon, health.cli === "missing" ? "triangle-alert" : health.identityLabel ? "badge-check" : "link");
+    setIcon(statusIcon, health.cli === "missing" ? "triangle-alert" : this.authorizationReady ? "badge-check" : "shield-alert");
     const statusText = status.createDiv();
-    statusText.createEl("strong", { text: health.cli === "missing" ? "未检测到 lark-cli" : health.identityLabel || "可以开始授权" });
-    statusText.createSpan({ text: health.cli === "missing" ? "请先安装最新版 lark-cli，再回到这里检测。" : health.message });
+    statusText.createEl("strong", { text: health.cli === "missing" ? "未检测到 lark-cli" : this.authorizationReady ? `${this.authorizationLabel || "飞书"}已授权` : "需要授权飞书" });
+    statusText.createSpan({ text: health.cli === "missing" ? "请先安装最新版 lark-cli，再回到这里检测。" : this.authorizationReady ? health.message : "选择模块后，可在下一步完成个人授权。" });
 
     const refresh = parent.createEl("button", { text: "重新检测" });
     refresh.disabled = this.busy;
@@ -115,6 +120,7 @@ export class FeishuSetupModal extends Modal {
   }
 
   private renderSelections(parent: HTMLElement): void {
+    if (!this.authorizationReady) this.renderAuthorizationGate(parent);
     if (this.config?.modules.messages) {
       const group = parent.createDiv({ cls: "zhixing-feishu-selection" });
       group.createEl("h3", { text: "项目群" });
@@ -123,16 +129,16 @@ export class FeishuSetupModal extends Modal {
       const lookup = group.createDiv({ cls: "zhixing-feishu-chat-lookup" });
       const input = lookup.createEl("input", { type: "text", placeholder: "例如：AI研发小组" });
       input.value = this.chatQuery;
-      input.disabled = this.busy;
+      input.disabled = this.busy || !this.authorizationReady;
       input.addEventListener("input", () => { this.chatQuery = input.value; });
       input.addEventListener("keydown", (event) => {
         if (event.key === "Enter") { event.preventDefault(); void this.lookupChat(); }
       });
       const search = lookup.createEl("button", { text: this.busy ? "正在查找" : "查找" });
-      search.disabled = this.busy;
+      search.disabled = this.busy || !this.authorizationReady;
       search.addEventListener("click", () => void this.lookupChat());
       const recent = lookup.createEl("button", { text: "最近使用" });
-      recent.disabled = this.busy;
+      recent.disabled = this.busy || !this.authorizationReady;
       recent.addEventListener("click", () => void this.browseRecentChats());
       this.renderChatCandidates(group);
       if (this.chatLookupMessage) group.createDiv({ cls: "zhixing-feishu-chat-message", text: this.chatLookupMessage });
@@ -145,16 +151,16 @@ export class FeishuSetupModal extends Modal {
       const lookup = base.createDiv({ cls: "zhixing-feishu-base-lookup" });
       const input = lookup.createEl("input", { type: "text", placeholder: "例如：AI 开发任务；也可以粘贴飞书链接" });
       input.value = this.baseQuery;
-      input.disabled = this.busy;
+      input.disabled = this.busy || !this.authorizationReady;
       input.addEventListener("input", () => { this.baseQuery = input.value; });
       input.addEventListener("keydown", (event) => {
         if (event.key === "Enter") { event.preventDefault(); void this.lookupBase(); }
       });
       const search = lookup.createEl("button", { text: this.busy ? "正在查找" : "查找" });
-      search.disabled = this.busy;
+      search.disabled = this.busy || !this.authorizationReady;
       search.addEventListener("click", () => void this.lookupBase());
       const recent = lookup.createEl("button", { text: "最近使用" });
-      recent.disabled = this.busy;
+      recent.disabled = this.busy || !this.authorizationReady;
       recent.addEventListener("click", () => void this.browseRecentBases());
       this.renderBaseCandidates(base);
       this.renderBasePicker(base);
@@ -185,14 +191,13 @@ export class FeishuSetupModal extends Modal {
     }
     const health = this.suite.snapshot().feishu;
     if (health.cli !== "missing") {
-      const auth = parent.createEl("button", { cls: "mod-cta zhixing-feishu-primary", text: this.authorizationStarted ? "我已完成网页授权" : health.identityLabel ? "补充所选模块权限" : "授权所选模块" });
+      const auth = parent.createEl("button", { cls: "mod-cta zhixing-feishu-primary", text: this.authorizationStarted ? "我已完成网页授权" : this.authorizationReady ? "补充所选模块权限" : "授权所选模块" });
       auth.disabled = this.busy;
       auth.addEventListener("click", () => void this.authorize());
     }
   }
 
   private renderConfirm(parent: HTMLElement): void {
-    const health = this.suite.snapshot().feishu;
     const summary = parent.createDiv({ cls: "zhixing-feishu-confirm" });
     metric(summary, "模块", String(Object.values(this.config?.modules || {}).filter(Boolean).length));
     metric(summary, "项目群", String(this.config?.selected_chats.length || 0));
@@ -205,7 +210,7 @@ export class FeishuSetupModal extends Modal {
       .addOptions({ "30": "30 分钟", "60": "1 小时", "120": "2 小时", "360": "6 小时" })
       .setValue(String(this.config?.sync_interval_minutes || 60))
       .onChange((value) => { if (this.config) this.config.sync_interval_minutes = Number(value); }));
-    if (!health.identityLabel) parent.createDiv({ cls: "zhixing-feishu-warning", text: "尚未确认授权身份。保存后首次同步会显示需要补充的权限。" });
+    if (!this.authorizationReady) parent.createDiv({ cls: "zhixing-feishu-warning", text: "尚未完成个人授权，飞书同步暂时不会启动。" });
   }
 
   private renderActions(parent: HTMLElement): void {
@@ -256,6 +261,8 @@ export class FeishuSetupModal extends Modal {
     try {
       if (this.authorizationStarted) {
         await this.suite.completeFeishuAuthorization();
+        await this.refreshAuthorization();
+        if (!this.authorizationReady) throw new Error("网页授权尚未完成，请先在飞书页面同意授权");
         new Notice("飞书授权已完成");
         this.authorizationStarted = false;
       } else {
@@ -269,6 +276,39 @@ export class FeishuSetupModal extends Modal {
       this.busy = false;
       this.render();
     }
+  }
+
+  private renderAuthorizationGate(parent: HTMLElement): void {
+    const gate = parent.createDiv({ cls: "zhixing-feishu-authorization-gate" });
+    setIcon(gate.createSpan(), "shield-check");
+    const copy = gate.createDiv();
+    copy.createEl("strong", { text: "先授权，再选择内容" });
+    copy.createSpan({ text: "飞书群聊和多维表格属于你的个人可见范围，需要由你授权读取。" });
+    const button = gate.createEl("button", {
+      cls: "mod-cta",
+      text: this.authorizationStarted ? "我已完成授权" : "立即授权"
+    });
+    button.disabled = this.busy;
+    button.addEventListener("click", () => void this.authorize());
+  }
+
+  private async refreshAuthorization(): Promise<void> {
+    try {
+      const status = await this.suite.getFeishuUserAuthorization();
+      this.authorizationReady = status.ready;
+      this.authorizationLabel = status.label || "";
+    } catch {
+      this.authorizationReady = false;
+      this.authorizationLabel = "";
+    }
+  }
+
+  private lookupError(error: unknown): string {
+    if (isFeishuAuthorizationRequired(error)) {
+      this.authorizationReady = false;
+      return "需要先授权飞书，才能查找群聊和多维表格";
+    }
+    return error instanceof Error ? error.message : "飞书暂时无法完成这次只读查询，请稍后重试";
   }
 
   private renderSelectedChats(parent: HTMLElement): void {
@@ -313,7 +353,7 @@ export class FeishuSetupModal extends Modal {
       this.chatCandidates = await this.suite.findFeishuChats(this.chatQuery);
       this.chatLookupMessage = this.chatCandidates.length === 1 ? "找到 1 个项目群，请选择" : `找到 ${this.chatCandidates.length} 个项目群，请选择`;
     } catch (error) {
-      this.chatLookupMessage = error instanceof Error ? error.message : String(error);
+      this.chatLookupMessage = this.lookupError(error);
       new Notice(this.chatLookupMessage);
     } finally {
       this.busy = false;
@@ -330,7 +370,7 @@ export class FeishuSetupModal extends Modal {
       this.chatCandidates = await this.suite.listRecentFeishuChats();
       this.chatLookupMessage = `找到 ${this.chatCandidates.length} 个最近使用的项目群，请选择`;
     } catch (error) {
-      this.chatLookupMessage = error instanceof Error ? error.message : String(error);
+      this.chatLookupMessage = this.lookupError(error);
       new Notice(this.chatLookupMessage);
     } finally {
       this.busy = false;
@@ -424,7 +464,7 @@ export class FeishuSetupModal extends Modal {
         this.baseLookupMessage = result.candidates.length === 1 ? "找到 1 个结果，请选择" : `找到 ${result.candidates.length} 个结果，请选择`;
       }
     } catch (error) {
-      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      this.baseLookupMessage = this.lookupError(error);
       new Notice(this.baseLookupMessage);
     } finally {
       this.busy = false;
@@ -444,7 +484,7 @@ export class FeishuSetupModal extends Modal {
       this.baseCandidates = await this.suite.listRecentFeishuBases();
       this.baseLookupMessage = `找到 ${this.baseCandidates.length} 个最近使用的多维表格，请选择`;
     } catch (error) {
-      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      this.baseLookupMessage = this.lookupError(error);
       new Notice(this.baseLookupMessage);
     } finally {
       this.busy = false;
@@ -466,7 +506,7 @@ export class FeishuSetupModal extends Modal {
       await this.loadViews();
       this.baseLookupMessage = "请选择数据表和视图，然后添加";
     } catch (error) {
-      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      this.baseLookupMessage = this.lookupError(error);
       new Notice(this.baseLookupMessage);
     } finally {
       this.busy = false;
@@ -484,7 +524,7 @@ export class FeishuSetupModal extends Modal {
       await this.loadViews();
       this.baseLookupMessage = "请选择数据表和视图，然后添加";
     } catch (error) {
-      this.baseLookupMessage = error instanceof Error ? error.message : String(error);
+      this.baseLookupMessage = this.lookupError(error);
       new Notice(this.baseLookupMessage);
     } finally {
       this.busy = false;
@@ -525,7 +565,7 @@ export class FeishuSetupModal extends Modal {
 
   private async refresh(): Promise<void> {
     this.busy = true;
-    await this.suite.refreshHealth();
+    await Promise.all([this.suite.refreshHealth(), this.refreshAuthorization()]);
     this.busy = false;
     this.render();
   }
