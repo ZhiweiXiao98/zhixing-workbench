@@ -27,6 +27,7 @@
     "date-fns": "^4.4.0"
   },
   "overrides": {
-    "postcss": "^8.5.25"
+    "postcss": "^8.5.25",
+    "nanoid": "^3.3.18"
   }
 }
