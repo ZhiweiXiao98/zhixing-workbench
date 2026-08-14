@@ -12,6 +12,7 @@ import {
   type FeishuChatCandidate
 } from "./feishu-chat-picker";
 import { isFeishuAuthorizationRequired } from "./feishu-cli-result";
+import { runFeishuAuthorizationFlow } from "./feishu-authorization-flow";
 
 const MODULES = [
   ["tasks", "我的任务", "分配给我的任务及状态变化"],
@@ -120,7 +121,11 @@ export class FeishuSetupModal extends Modal {
   }
 
   private renderSelections(parent: HTMLElement): void {
-    if (!this.authorizationReady) this.renderAuthorizationGate(parent);
+    if (!this.authorizationReady) {
+      this.renderAuthorizationGate(parent);
+      parent.createDiv({ cls: "zhixing-feishu-privacy", text: "完成授权后，才会显示群聊和多维表格选择。私聊与未选择的内容不会进入知行台。" });
+      return;
+    }
     if (this.config?.modules.messages) {
       const group = parent.createDiv({ cls: "zhixing-feishu-selection" });
       group.createEl("h3", { text: "项目群" });
@@ -191,7 +196,7 @@ export class FeishuSetupModal extends Modal {
     }
     const health = this.suite.snapshot().feishu;
     if (health.cli !== "missing") {
-      const auth = parent.createEl("button", { cls: "mod-cta zhixing-feishu-primary", text: this.authorizationStarted ? "我已完成网页授权" : this.authorizationReady ? "补充所选模块权限" : "授权所选模块" });
+      const auth = parent.createEl("button", { cls: "mod-cta zhixing-feishu-primary", text: this.authorizationStarted ? "正在等待飞书授权" : this.authorizationReady ? "补充所选模块权限" : "连接飞书" });
       auth.disabled = this.busy;
       auth.addEventListener("click", () => void this.authorize());
     }
@@ -255,24 +260,30 @@ export class FeishuSetupModal extends Modal {
   }
 
   private async authorize(): Promise<void> {
-    if (!this.config) return;
+    if (!this.config || this.busy) return;
     this.busy = true;
     this.render();
     try {
-      if (this.authorizationStarted) {
-        await this.suite.completeFeishuAuthorization();
-        await this.refreshAuthorization();
-        if (!this.authorizationReady) throw new Error("网页授权尚未完成，请先在飞书页面同意授权");
-        new Notice("飞书授权已完成");
-        this.authorizationStarted = false;
-      } else {
-        await this.suite.beginFeishuAuthorization(this.config);
-        this.authorizationStarted = true;
-        new Notice("已打开飞书授权页面，完成后回到这里确认");
-      }
+      const status = await runFeishuAuthorizationFlow({
+        begin: async () => { await this.suite.beginFeishuAuthorization(this.config!); },
+        onWaiting: () => {
+          this.authorizationStarted = true;
+          this.render();
+          new Notice("请在飞书官方页面确认，完成后这里会自动连接");
+        },
+        complete: async () => { await this.suite.completeFeishuAuthorization(); },
+        readState: async () => this.suite.getFeishuUserAuthorization()
+      });
+      this.authorizationReady = status.ready;
+      this.authorizationLabel = status.label || "";
+      if (!this.authorizationReady) throw new Error("飞书没有确认授权，请重新连接");
+      this.chatLookupMessage = "";
+      this.baseLookupMessage = "";
+      new Notice("飞书已连接，可以开始选择内容");
     } catch (error) {
       new Notice(error instanceof Error ? error.message : String(error));
     } finally {
+      this.authorizationStarted = false;
       this.busy = false;
       this.render();
     }
@@ -282,13 +293,15 @@ export class FeishuSetupModal extends Modal {
     const gate = parent.createDiv({ cls: "zhixing-feishu-authorization-gate" });
     setIcon(gate.createSpan(), "shield-check");
     const copy = gate.createDiv();
-    copy.createEl("strong", { text: "先授权，再选择内容" });
-    copy.createSpan({ text: "飞书群聊和多维表格属于你的个人可见范围，需要由你授权读取。" });
+    copy.createEl("strong", { text: this.authorizationStarted ? "等待飞书确认" : "连接飞书后选择内容" });
+    copy.createSpan({ text: this.authorizationStarted
+      ? "请在刚打开的飞书官方页面同意授权，完成后这里会自动连接。"
+      : "点击一次即可打开飞书官方授权页。授权完成后，群聊和多维表格选择会自动出现。" });
     const button = gate.createEl("button", {
       cls: "mod-cta",
-      text: this.authorizationStarted ? "我已完成授权" : "立即授权"
+      text: this.authorizationStarted ? "正在等待授权" : "连接飞书"
     });
-    button.disabled = this.busy;
+    button.disabled = this.busy || this.authorizationStarted;
     button.addEventListener("click", () => void this.authorize());
   }
 

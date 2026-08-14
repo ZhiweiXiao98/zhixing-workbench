@@ -456,6 +456,7 @@ export class SuiteService {
   async beginFeishuAuthorization(config: FeishuConnectorConfig): Promise<FeishuAuthorization> {
     const scopes = feishuScopes(config);
     if (scopes.length === 0) throw new Error("请先选择至少一个飞书模块");
+    this.feishuDeviceCode = "";
     const result = await executeLarkCli(["auth", "login", "--scope", scopes.join(" "), "--no-wait", "--json"], {
       timeout: 30_000,
       windowsHide: true,
@@ -473,14 +474,18 @@ export class SuiteService {
 
   async completeFeishuAuthorization(): Promise<void> {
     if (!this.feishuDeviceCode) throw new Error("请先开始飞书授权");
-    await executeLarkCli(["auth", "login", "--device-code", this.feishuDeviceCode, "--json"], {
-      timeout: 10 * 60_000,
-      windowsHide: true,
-      maxBuffer: 2 * 1024 * 1024,
-      env: larkCliEnv()
-    }, this.larkExecutable);
-    this.feishuDeviceCode = "";
-    await this.refreshHealth();
+    const deviceCode = this.feishuDeviceCode;
+    try {
+      await executeLarkCli(["auth", "login", "--device-code", deviceCode, "--json"], {
+        timeout: 10 * 60_000,
+        windowsHide: true,
+        maxBuffer: 2 * 1024 * 1024,
+        env: larkCliEnv()
+      }, this.larkExecutable);
+      await this.refreshHealth();
+    } finally {
+      this.feishuDeviceCode = "";
+    }
   }
 
   async runFeishuSyncNow(notify = true): Promise<void> {
