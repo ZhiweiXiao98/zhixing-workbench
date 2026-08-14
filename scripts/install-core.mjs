@@ -22,7 +22,7 @@ const LEGACY_TASK_NAMES = [
   "Codex - Obsidian Daily Ingest"
 ];
 
-export const VERSION = "0.6.14";
+export const VERSION = "0.6.15";
 export const OWNED_SKILLS = ["obsidian-knowledge", "investigate-work-history", "zhixing-manager"];
 
 export async function installSuite(options = {}) {

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { diagnoseSuite, installSuite, sha256File, uninstallSuite, VERSION } from "./install-core.mjs";
+import { extractArchive } from "./release-archive.mjs";
 
 const execFileAsync = promisify(execFile);
 const REPOSITORY = "ZhiweiXiao98/zhixing-workbench";
@@ -57,7 +58,7 @@ async function updateSuite(options) {
   try {
     await download(asset.url, archive);
     if (await sha256File(archive) !== asset.sha256) throw new Error("更新包 SHA256 校验失败，未修改现有安装");
-    await execFileAsync("tar", ["-xzf", archive, "-C", extracted], { timeout: 120_000, windowsHide: true });
+    await extractArchive(archive, extracted);
     const installState = await installedState();
     if (!installState?.vault_root) throw new Error("找不到现有 Vault，请重新运行 install");
     const installer = path.join(extracted, "zhixing-workbench", "scripts", "zhixing.mjs");
