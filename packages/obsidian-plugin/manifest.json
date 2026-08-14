@@ -1,7 +1,7 @@
 {
   "id": "zhixing-workbench",
   "name": "知行台",
-  "version": "0.6.13",
+  "version": "0.6.14",
   "minAppVersion": "1.7.2",
   "description": "跨平台汇总每日成果，追踪长期知识沉淀，并显示采集与更新健康状态。",
   "author": "肖志伟",

@@ -329,7 +329,7 @@ function memorySectionText(sections, key, label) {
   const value = sectionText(sections, key, label);
   if (value.replace(/\s+/g, "").length < 40 ||
       !value.split(/\r?\n/).some((line) =>
-        line.trim().length >= 40 && !/^[-*+\d]/.test(line.trim()))) {
+        line.trim().length >= 40 && !/^(?:[-*+]\s|\d+[.)、]\s?)/.test(line.trim()))) {
     throw new Error(`语义结果的“${label}”需要用完整自然段讲清楚`);
   }
   return value;
@@ -489,7 +489,7 @@ function extractSourceEventIds(content) {
   const canonicalIds = [...rawText(content).matchAll(
     /[^\s"'`]+:(?:UserPromptSubmit|Stop):[0-9a-f]{64}/gi
   )].map((match) => match[0]);
-  return uniqueStrings([...metadataIds, ...canonicalIds]);
+  return uniqueStrings(metadataIds.length > 0 ? metadataIds : canonicalIds);
 }
 
 function extractDailyPaths(content) {

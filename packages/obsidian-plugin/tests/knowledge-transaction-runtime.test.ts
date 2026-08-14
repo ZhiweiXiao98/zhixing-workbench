@@ -24,8 +24,8 @@ describe("knowledge transaction", () => {
       processed_event_ids: [],
       last_successful_run: "2026-07-23T00:00:00.000Z"
     }), "utf8");
-    const promptId = `session:turn:UserPromptSubmit:${"a".repeat(64)}`;
-    const stopId = `session:turn:Stop:${"b".repeat(64)}`;
+    const promptId = `codex:${"a".repeat(32)}`;
+    const stopId = `codex:${"b".repeat(32)}`;
     await writeFile(path.join(vault, "raw", "codex", "events", "2026-07-24.jsonl"), [
       JSON.stringify(record(promptId, "UserPromptSubmit", "接收器停止后无法自动恢复")),
       JSON.stringify(record(stopId, "Stop", "增加健康守护并完成验证"))
@@ -606,7 +606,7 @@ function semanticResult(runId: string, outcomeId: string) {
       reason: "这次异常留下了可复用的判断和恢复路径",
       evidence_document: {
         title: "知识整理异常的判断与恢复",
-        projects: ["project"],
+        projects: ["知识工作台 团队版"],
         last_verified: "2026-07-24",
         trust: "observed",
         sections: {
@@ -621,14 +621,14 @@ function semanticResult(runId: string, outcomeId: string) {
       },
       memory_document: {
         title: "知识为什么没有按预期整理",
-        projects: ["project"],
+        projects: ["知识工作台 团队版"],
         last_reviewed: "2026-07-24",
         occurred_time: "2026-07-24",
         sections: {
           goal: "我希望每天产生的工作记录能自动变成看得懂的经历文章，不需要第二天再依靠记忆手工补写。",
           obstacle: "原始问答虽然已经采集，但整理结果可能停在日志里，Obsidian 中没有出现能让我回忆事情的文章。",
           judgment: "我把采集、来源页、语义整理和最终写入分开检查，确认只有所有环节都成功才可以推进状态。",
-          action: "我保留原始事件，让语义模型只回答内容问题，再由本地程序生成文件结构、来源链接和稳定编号。",
+          action: "2026-07-24 我保留原始事件，让语义模型只回答内容问题，再由本地程序生成文件结构、来源链接和稳定编号。",
           result: "整理成功后会同时留下经历文章和证据页，任何一步失败都不会吞掉尚未处理的原始记录。",
           next: "下次发现文章缺失时，我会先看整理记录标出的失败环节，再核对原始事件是否仍在等待队列中，然后只重试尚未完成的主题。"
         }

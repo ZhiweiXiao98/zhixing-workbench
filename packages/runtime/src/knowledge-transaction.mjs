@@ -809,9 +809,7 @@ function validateEvidenceContent(content, pairs, dailyPaths, existing, memoryPat
   const currentEventIds = uniqueStrings(pairs.flatMap((pair) => pair.source_event_ids));
   const existingEventIds = extractEventIds(existing);
   const expectedEventIds = uniqueStrings([...existingEventIds, ...currentEventIds]);
-  const referencedEventIds = uniqueStrings([...content.matchAll(
-    /[^\s"'`]+:(?:UserPromptSubmit|Stop):[0-9a-f]{64}/gi
-  )].map((match) => match[0]));
+  const referencedEventIds = extractEventIds(content);
   if (!sameStringSet(referencedEventIds, expectedEventIds)) {
     throw new Error("AI 证据页的原始事件来源与合同主题不完全一致");
   }
@@ -850,7 +848,8 @@ function validateMemoryContent(content, digest, evidencePaths, existing) {
       throw new Error(`经历文章的“${heading}”没有讲清楚`);
     }
     if (heading !== "需要追溯时" && !section.split(/\r?\n/)
-      .some((line) => line.trim().length >= 40 && !/^[-*+\d]/.test(line.trim()))) {
+      .some((line) => line.trim().length >= 40 &&
+        !/^(?:[-*+]\s|\d+[.)、]\s?)/.test(line.trim()))) {
       throw new Error(`经历文章的“${heading}”至少需要一个自然段，不能只列清单`);
     }
   }
@@ -893,9 +892,27 @@ function validateMemoryContent(content, digest, evidencePaths, existing) {
 }
 
 function extractEventIds(content) {
+  const metadata = frontmatter(content);
+  const inline = metadata.match(/^source_event_ids:\s*\[([^\]]*)]\s*$/m)?.[1];
+  const declared = inline !== undefined
+    ? inline.split(",").map(unquoteMetadataValue).filter(Boolean)
+    : (metadata.match(/^source_event_ids:\s*$\r?\n((?:\s+-\s+.*(?:\r?\n|$))*)/m)?.[1] || "")
+      .split(/\r?\n/)
+      .map((line) => unquoteMetadataValue(line.replace(/^\s*-\s*/, "")))
+      .filter(Boolean);
+  if (declared.length > 0) return uniqueStrings(declared);
   return uniqueStrings([...String(content || "").matchAll(
     /[^\s"'`]+:(?:UserPromptSubmit|Stop):[0-9a-f]{64}/gi
   )].map((match) => match[0]));
+}
+
+function unquoteMetadataValue(value) {
+  const normalized = String(value || "").trim();
+  if ((normalized.startsWith('"') && normalized.endsWith('"')) ||
+      (normalized.startsWith("'") && normalized.endsWith("'"))) {
+    return normalized.slice(1, -1);
+  }
+  return normalized;
 }
 
 function frontmatterValue(content, key) {
@@ -908,8 +925,14 @@ function frontmatter(content) {
 
 function hasProjects(content) {
   const metadata = frontmatter(content);
-  return /^projects:\s*\[[^\]]+\]\s*$/m.test(metadata) ||
-    /^projects:\s*$\r?\n(?:\s+-\s+\S+\s*(?:\r?\n|$))+/m.test(metadata);
+  const inline = metadata.match(/^projects:\s*\[([^\]]*)]\s*$/m)?.[1];
+  const declared = inline !== undefined
+    ? inline.split(",").map(unquoteMetadataValue).filter(Boolean)
+    : (metadata.match(/^projects:\s*$\r?\n((?:\s+-\s+.*(?:\r?\n|$))*)/m)?.[1] || "")
+      .split(/\r?\n/)
+      .map((line) => unquoteMetadataValue(line.replace(/^\s*-\s*/, "")))
+      .filter(Boolean);
+  return declared.length > 0;
 }
 
 function hasMarkdownLink(content, targetPath) {
