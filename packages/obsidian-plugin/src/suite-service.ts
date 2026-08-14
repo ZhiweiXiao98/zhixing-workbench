@@ -29,10 +29,13 @@ import {
   type FeishuChatCandidate
 } from "./feishu-chat-picker";
 import {
+  safeFeishuPermissionUrl,
   parseFeishuCliPayload,
   readFeishuUserAuthorization,
+  withFeishuAppPermissionScopes,
   type FeishuUserAuthorizationState
 } from "./feishu-cli-result";
+import { feishuSyncNotice, parseFeishuSyncResult, type FeishuSyncResult } from "./feishu-sync-result";
 
 const execFileAsync = promisify(execFile);
 const RECEIVER_PORT = 43123;
@@ -149,6 +152,7 @@ export class SuiteService {
   private health: SuiteHealth;
   private scheduleTimer?: number;
   private feishuDeviceCode = "";
+  private nodeExecutable?: string;
   private codexExecutable?: string;
   private larkExecutable?: string;
   private scheduledWork?: Promise<void>;
@@ -245,7 +249,7 @@ export class SuiteService {
   }
 
   async runKnowledgeNow(): Promise<void> {
-    if (!this.programRoot || !this.health.organizer.executor.supported || this.health.running) {
+    if (!this.programRoot || !this.nodeExecutable || !this.health.organizer.executor.supported || this.health.running) {
       if (!this.health.running) new Notice("知识整理执行器尚未就绪，请在状态提示中查看原因");
       return;
     }
@@ -257,8 +261,8 @@ export class SuiteService {
       onAcquired: async () => this.setHealth({ running: true }),
       runKnowledge: async () => {
         await this.runFeishuSyncNow(false);
-        await execFileAsync(process.execPath, [runner, "--vault", vault, "--trigger", "manual"], {
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+        await execFileAsync(this.nodeExecutable!, [runner, "--vault", vault, "--trigger", "manual"], {
+          env: { ...process.env, ZHIXING_CAPTURE_DISABLED: "1",
             ...(this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}) },
           timeout: 6 * 60 * 60_000,
           windowsHide: true,
@@ -301,11 +305,12 @@ export class SuiteService {
     const runtimeHealth: FactualHealth = {
       source_type: "knowledge_runtime_v1",
       configured: Boolean(this.programRoot),
-      supported: Boolean(this.programRoot),
-      last_seen_at: this.programRoot ? now : null,
+      supported: Boolean(this.programRoot && this.nodeExecutable),
+      last_seen_at: this.programRoot && this.nodeExecutable ? now : null,
       last_event_at: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : null,
       stale: false,
-      error: this.programRoot ? null : "知行台知识运行时缺失"
+      error: !this.programRoot ? "知行台知识运行时缺失" :
+        this.nodeExecutable ? null : "知行台运行程序缺失，请重新安装知行台"
     };
     const executorHealth: FactualHealth = {
       source_type: "codex_exec_v1",
@@ -377,6 +382,10 @@ export class SuiteService {
     return readFeishuUserAuthorization(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
   }
 
+  getRequiredFeishuScopes(config: FeishuConnectorConfig): string[] {
+    return feishuScopes(config);
+  }
+
   async saveFeishuConfig(value: FeishuConnectorConfig): Promise<FeishuConnectorConfig> {
     const config = normalizeFeishuConfig(value);
     await this.ensureVaultDirectory(".zhixing");
@@ -436,26 +445,41 @@ export class SuiteService {
   }
 
   async listFeishuBaseTables(baseToken: string): Promise<FeishuBaseTable[]> {
-    const result = await executeLarkCli([
-      "base", "+base-block-list", "--base-token", baseToken, "--type", "table", "--as", "user", "--json"
-    ], feishuReadOptions(), this.larkExecutable);
-    const tables = parseBaseTablesPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
-    if (tables.length === 0) throw new Error("这个多维表格中没有可选择的数据表");
-    return tables;
+    try {
+      const result = await executeLarkCli([
+        "base", "+table-list", "--base-token", baseToken, "--as", "user", "--json"
+      ], feishuReadOptions(), this.larkExecutable);
+      const tables = parseBaseTablesPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
+      if (tables.length === 0) throw new Error("这个多维表格中没有可选择的数据表");
+      return tables;
+    } catch (error) {
+      throw withFeishuAppPermissionScopes(error, baseReadScopes(), "飞书应用尚未开通多维表格只读权限");
+    }
   }
 
   async listFeishuBaseViews(baseToken: string, tableId: string): Promise<FeishuBaseView[]> {
-    const result = await executeLarkCli([
-      "base", "+view-list", "--base-token", baseToken, "--table-id", tableId, "--as", "user", "--json"
-    ], feishuReadOptions(), this.larkExecutable);
-    const views = parseBaseViewsPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
-    if (views.length === 0) throw new Error("这个数据表中没有可选择的视图");
-    return views;
+    try {
+      const result = await executeLarkCli([
+        "base", "+view-list", "--base-token", baseToken, "--table-id", tableId, "--as", "user", "--json"
+      ], feishuReadOptions(), this.larkExecutable);
+      const views = parseBaseViewsPayload(parseFeishuCliPayload(`${result.stdout}\n${result.stderr}`));
+      if (views.length === 0) throw new Error("这个数据表中没有可选择的视图");
+      return views;
+    } catch (error) {
+      throw withFeishuAppPermissionScopes(error, baseReadScopes(), "飞书应用尚未开通多维表格只读权限");
+    }
+  }
+
+  async openFeishuPermissionPage(value: string): Promise<void> {
+    const url = safeFeishuPermissionUrl(value);
+    if (!url) throw new Error("飞书没有返回可用的官方权限页面");
+    await shell.openExternal(url);
   }
 
   async beginFeishuAuthorization(config: FeishuConnectorConfig): Promise<FeishuAuthorization> {
     const scopes = feishuScopes(config);
     if (scopes.length === 0) throw new Error("请先选择至少一个飞书模块");
+    this.feishuDeviceCode = "";
     const result = await executeLarkCli(["auth", "login", "--scope", scopes.join(" "), "--no-wait", "--json"], {
       timeout: 30_000,
       windowsHide: true,
@@ -473,38 +497,50 @@ export class SuiteService {
 
   async completeFeishuAuthorization(): Promise<void> {
     if (!this.feishuDeviceCode) throw new Error("请先开始飞书授权");
-    await executeLarkCli(["auth", "login", "--device-code", this.feishuDeviceCode, "--json"], {
-      timeout: 10 * 60_000,
-      windowsHide: true,
-      maxBuffer: 2 * 1024 * 1024,
-      env: larkCliEnv()
-    }, this.larkExecutable);
-    this.feishuDeviceCode = "";
-    await this.refreshHealth();
+    const deviceCode = this.feishuDeviceCode;
+    try {
+      await executeLarkCli(["auth", "login", "--device-code", deviceCode, "--json"], {
+        timeout: 10 * 60_000,
+        windowsHide: true,
+        maxBuffer: 2 * 1024 * 1024,
+        env: larkCliEnv()
+      }, this.larkExecutable);
+      await this.refreshHealth();
+    } finally {
+      this.feishuDeviceCode = "";
+    }
   }
 
   async runFeishuSyncNow(notify = true): Promise<void> {
     if (!this.programRoot || this.health.feishu.syncing) return;
+    if (!this.nodeExecutable) {
+      if (notify) new Notice("飞书同步程序缺失，请重新安装知行台");
+      return;
+    }
     const config = await this.getFeishuConfig();
     if (!config.enabled) return;
     const runner = path.join(this.programRoot, "runtime", "feishu-cli.mjs");
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "正在同步飞书" } });
+    let syncResult: FeishuSyncResult | null = null;
     try {
-      await execFileAsync(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+      const execution = await execFileAsync(this.nodeExecutable, [runner, "--vault", this.vaultBasePath(), "--force"], {
+        env: { ...process.env, ZHIXING_CAPTURE_DISABLED: "1",
           ...(this.larkExecutable ? { LARK_CLI_BIN: this.larkExecutable } : {}) },
         timeout: 30 * 60_000,
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024
       });
-      if (notify) new Notice("飞书只读同步完成，新增内容已进入整理队列");
-    } catch (error) {
-      console.error("Zhixing Feishu sync failed", safeCommandError(error));
-      if (notify) new Notice("飞书同步未完成，已保留失败状态并等待重试");
+      syncResult = parseFeishuSyncResult(execution.stdout);
+    } catch (error: any) {
+      syncResult = parseFeishuSyncResult(`${String(error?.stdout || "")}\n${String(error?.stderr || "")}`);
+      if (!syncResult || syncResult.status === "failed") {
+        console.error("Zhixing Feishu sync failed", safeCommandError(error));
+      }
     } finally {
       this.setHealth({ feishu: { ...this.health.feishu, syncing: false } });
       await this.refreshHealth();
     }
+    if (notify) new Notice(syncResult ? feishuSyncNotice(syncResult) : "飞书同步未完成，已保留失败状态并等待重试");
   }
 
   async clearFeishuCache(): Promise<void> {
@@ -627,6 +663,8 @@ export class SuiteService {
 
   private async findProgramRoot(): Promise<void> {
     const install = await readJson(path.join(configRoot(), "install.json"), null);
+    this.nodeExecutable = typeof install?.node_path === "string" && install.node_path.trim()
+      ? install.node_path : undefined;
     if (typeof install?.program_root === "string") {
       const runner = path.join(install.program_root, "runtime", "run-cycle.mjs");
       try { await readFile(runner, "utf8"); this.programRoot = install.program_root; return; } catch {}
@@ -655,9 +693,9 @@ export class SuiteService {
         if (!this.programRoot) throw new Error("知行台知识运行时缺失");
         this.setHealth({ running: true });
         try {
-          await execFileAsync(process.execPath, [path.join(this.programRoot, "runtime", "run-cycle.mjs"),
+          await execFileAsync(this.nodeExecutable!, [path.join(this.programRoot, "runtime", "run-cycle.mjs"),
             "--vault", vault, "--trigger", "automatic"], {
-            env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
+            env: { ...process.env, ZHIXING_CAPTURE_DISABLED: "1",
               ...(this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}) },
             timeout: 6 * 60 * 60_000,
             windowsHide: true,
@@ -893,6 +931,10 @@ function normalizeFeishuConfig(value: any): FeishuConnectorConfig {
 function feishuScopes(config: FeishuConnectorConfig): string[] {
   return [...new Set(Object.entries(config.modules).filter(([, enabled]) => enabled)
     .flatMap(([module]) => FEISHU_SCOPE_MAP[module] || []))].sort();
+}
+
+function baseReadScopes(): string[] {
+  return (FEISHU_SCOPE_MAP.base || []).filter((scope) => scope.startsWith("base:"));
 }
 
 async function countPendingFeishu(vault: string): Promise<number> {

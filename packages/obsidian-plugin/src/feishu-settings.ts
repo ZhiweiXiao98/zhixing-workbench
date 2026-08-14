@@ -11,7 +11,13 @@ import {
   createChatSelection,
   type FeishuChatCandidate
 } from "./feishu-chat-picker";
-import { isFeishuAuthorizationRequired } from "./feishu-cli-result";
+import {
+  feishuAppPermissionUrl,
+  isFeishuAuthorizationRequired,
+  missingFeishuAuthorizationScopes,
+  type FeishuUserAuthorizationState
+} from "./feishu-cli-result";
+import { runFeishuAuthorizationFlow } from "./feishu-authorization-flow";
 
 const MODULES = [
   ["tasks", "我的任务", "分配给我的任务及状态变化"],
@@ -30,6 +36,8 @@ export class FeishuSetupModal extends Modal {
   private authorizationStarted = false;
   private authorizationReady = false;
   private authorizationLabel = "";
+  private authorizationScopeKnown = false;
+  private authorizationScopes: string[] = [];
   private busy = false;
   private chatQuery = "";
   private chatCandidates: FeishuChatCandidate[] = [];
@@ -42,6 +50,7 @@ export class FeishuSetupModal extends Modal {
   private selectedTableId = "";
   private selectedViewId = "";
   private baseLookupMessage = "";
+  private appPermissionUrl = "";
 
   constructor(app: App, private readonly suite: SuiteService) {
     super(app);
@@ -120,7 +129,12 @@ export class FeishuSetupModal extends Modal {
   }
 
   private renderSelections(parent: HTMLElement): void {
-    if (!this.authorizationReady) this.renderAuthorizationGate(parent);
+    if (!this.authorizationReady || this.missingAuthorizationScopes().length > 0) {
+      this.renderAuthorizationGate(parent);
+      this.renderAppPermissionAction(parent);
+      parent.createDiv({ cls: "zhixing-feishu-privacy", text: "完成授权后，才会显示群聊和多维表格选择。私聊与未选择的内容不会进入知行台。" });
+      return;
+    }
     if (this.config?.modules.messages) {
       const group = parent.createDiv({ cls: "zhixing-feishu-selection" });
       group.createEl("h3", { text: "项目群" });
@@ -165,6 +179,7 @@ export class FeishuSetupModal extends Modal {
       this.renderBaseCandidates(base);
       this.renderBasePicker(base);
       if (this.baseLookupMessage) base.createDiv({ cls: "zhixing-feishu-base-message", text: this.baseLookupMessage });
+      this.renderAppPermissionAction(base, Boolean(this.pickerBase));
     }
     if (!this.config?.modules.messages && !this.config?.modules.base) {
       const empty = parent.createDiv({ cls: "zhixing-feishu-empty" });
@@ -191,10 +206,23 @@ export class FeishuSetupModal extends Modal {
     }
     const health = this.suite.snapshot().feishu;
     if (health.cli !== "missing") {
-      const auth = parent.createEl("button", { cls: "mod-cta zhixing-feishu-primary", text: this.authorizationStarted ? "我已完成网页授权" : this.authorizationReady ? "补充所选模块权限" : "授权所选模块" });
-      auth.disabled = this.busy;
-      auth.addEventListener("click", () => void this.authorize());
+      const missingScopes = this.missingAuthorizationScopes();
+      if (this.authorizationReady && missingScopes.length === 0) {
+        const ready = parent.createDiv({ cls: "zhixing-feishu-status is-ready" });
+        setIcon(ready.createSpan(), "badge-check");
+        const copy = ready.createDiv();
+        copy.createEl("strong", { text: "所选模块权限已就绪" });
+        copy.createSpan({ text: "无需再次授权，可以直接进入下一步。" });
+      } else {
+        const auth = parent.createEl("button", {
+          cls: "mod-cta zhixing-feishu-primary",
+          text: this.authorizationStarted ? "正在等待飞书授权" : this.authorizationReady ? "补充所选模块权限" : "连接飞书"
+        });
+        auth.disabled = this.busy;
+        auth.addEventListener("click", () => void this.authorize());
+      }
     }
+    this.renderAppPermissionAction(parent);
   }
 
   private renderConfirm(parent: HTMLElement): void {
@@ -255,60 +283,124 @@ export class FeishuSetupModal extends Modal {
   }
 
   private async authorize(): Promise<void> {
-    if (!this.config) return;
+    if (!this.config || this.busy) return;
     this.busy = true;
+    this.appPermissionUrl = "";
     this.render();
     try {
-      if (this.authorizationStarted) {
-        await this.suite.completeFeishuAuthorization();
-        await this.refreshAuthorization();
-        if (!this.authorizationReady) throw new Error("网页授权尚未完成，请先在飞书页面同意授权");
-        new Notice("飞书授权已完成");
-        this.authorizationStarted = false;
-      } else {
-        await this.suite.beginFeishuAuthorization(this.config);
-        this.authorizationStarted = true;
-        new Notice("已打开飞书授权页面，完成后回到这里确认");
-      }
+      const status = await runFeishuAuthorizationFlow({
+        begin: async () => { await this.suite.beginFeishuAuthorization(this.config!); },
+        onWaiting: () => {
+          this.authorizationStarted = true;
+          this.render();
+          new Notice("请在飞书官方页面确认，完成后这里会自动连接");
+        },
+        complete: async () => { await this.suite.completeFeishuAuthorization(); },
+        readState: async () => this.suite.getFeishuUserAuthorization()
+      });
+      this.applyAuthorizationState(status);
+      if (!this.authorizationReady) throw new Error("飞书没有确认授权，请重新连接");
+      this.chatLookupMessage = "";
+      this.baseLookupMessage = "";
+      new Notice("飞书已连接，可以开始选择内容");
     } catch (error) {
-      new Notice(error instanceof Error ? error.message : String(error));
+      const message = this.lookupError(error);
+      new Notice(message);
     } finally {
+      this.authorizationStarted = false;
       this.busy = false;
       this.render();
     }
   }
 
   private renderAuthorizationGate(parent: HTMLElement): void {
+    const supplement = this.authorizationReady && this.missingAuthorizationScopes().length > 0;
     const gate = parent.createDiv({ cls: "zhixing-feishu-authorization-gate" });
     setIcon(gate.createSpan(), "shield-check");
     const copy = gate.createDiv();
-    copy.createEl("strong", { text: "先授权，再选择内容" });
-    copy.createSpan({ text: "飞书群聊和多维表格属于你的个人可见范围，需要由你授权读取。" });
+    copy.createEl("strong", { text: this.authorizationStarted ? "等待飞书确认" : supplement ? "补充所选模块权限" : "连接飞书后选择内容" });
+    copy.createSpan({ text: this.authorizationStarted
+      ? "请在刚打开的飞书官方页面同意授权，完成后这里会自动连接。"
+      : supplement
+        ? "当前账号已连接，但新选择的模块还缺少只读权限。补充完成后会自动继续。"
+        : "点击一次即可打开飞书官方授权页。授权完成后，群聊和多维表格选择会自动出现。" });
     const button = gate.createEl("button", {
       cls: "mod-cta",
-      text: this.authorizationStarted ? "我已完成授权" : "立即授权"
+      text: this.authorizationStarted ? "正在等待授权" : supplement ? "补充权限" : "连接飞书"
     });
-    button.disabled = this.busy;
+    button.disabled = this.busy || this.authorizationStarted;
     button.addEventListener("click", () => void this.authorize());
   }
 
   private async refreshAuthorization(): Promise<void> {
     try {
       const status = await this.suite.getFeishuUserAuthorization();
-      this.authorizationReady = status.ready;
-      this.authorizationLabel = status.label || "";
+      this.applyAuthorizationState(status);
     } catch {
       this.authorizationReady = false;
       this.authorizationLabel = "";
+      this.authorizationScopeKnown = false;
+      this.authorizationScopes = [];
     }
   }
 
+  private applyAuthorizationState(status: FeishuUserAuthorizationState): void {
+    this.authorizationReady = status.ready;
+    this.authorizationLabel = status.label || "";
+    this.authorizationScopeKnown = status.scopeKnown;
+    this.authorizationScopes = status.grantedScopes;
+  }
+
+  private missingAuthorizationScopes(): string[] {
+    if (!this.config) return [];
+    return missingFeishuAuthorizationScopes({
+      ready: this.authorizationReady,
+      label: this.authorizationLabel,
+      message: "",
+      scopeKnown: this.authorizationScopeKnown,
+      grantedScopes: this.authorizationScopes
+    }, this.suite.getRequiredFeishuScopes(this.config));
+  }
+
   private lookupError(error: unknown): string {
+    const permissionUrl = feishuAppPermissionUrl(error);
+    if (permissionUrl) this.appPermissionUrl = permissionUrl;
     if (isFeishuAuthorizationRequired(error)) {
       this.authorizationReady = false;
+      this.authorizationScopeKnown = false;
+      this.authorizationScopes = [];
       return "需要先授权飞书，才能查找群聊和多维表格";
     }
     return error instanceof Error ? error.message : "飞书暂时无法完成这次只读查询，请稍后重试";
+  }
+
+  private renderAppPermissionAction(parent: HTMLElement, allowRetry = false): void {
+    if (!this.appPermissionUrl) return;
+    const action = parent.createDiv({ cls: "zhixing-feishu-app-permission" });
+    setIcon(action.createSpan(), "shield-alert");
+    const copy = action.createDiv();
+    copy.createEl("strong", { text: "需要开通飞书应用权限" });
+    copy.createSpan({ text: "在飞书官方页面一次开通多维表格的表、视图和记录只读权限。完成后回到这里重新读取。" });
+    const buttons = action.createDiv();
+    const open = buttons.createEl("button", { cls: "mod-cta", text: "在飞书中开通" });
+    open.disabled = this.busy;
+    open.addEventListener("click", () => void this.openAppPermissionPage());
+    if (allowRetry) {
+      const retry = buttons.createEl("button", { text: "重新读取" });
+      retry.disabled = this.busy;
+      retry.addEventListener("click", () => { if (this.pickerBase) void this.chooseBase(this.pickerBase); });
+    }
+  }
+
+  private async openAppPermissionPage(): Promise<void> {
+    try {
+      await this.suite.openFeishuPermissionPage(this.appPermissionUrl);
+      this.baseLookupMessage = "已打开飞书官方权限页面。完成开通后，回到这里点击“重新读取”。";
+      new Notice("已打开飞书官方权限页面");
+    } catch (error) {
+      new Notice(error instanceof Error ? error.message : String(error));
+    }
+    this.render();
   }
 
   private renderSelectedChats(parent: HTMLElement): void {
@@ -494,6 +586,7 @@ export class FeishuSetupModal extends Modal {
 
   private async chooseBase(candidate: FeishuBaseCandidate): Promise<void> {
     this.busy = true;
+    this.appPermissionUrl = "";
     this.pickerBase = candidate;
     this.baseCandidates = [];
     this.baseTables = [];

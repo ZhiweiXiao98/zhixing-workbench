@@ -5911,7 +5911,11 @@ function parseBaseLookupPayload(payload) {
 }
 function parseBaseTablesPayload(payload) {
   const data = payload?.data ?? payload ?? {};
-  return (Array.isArray(data.blocks) ? data.blocks : []).filter((item) => item?.type === "table").map((item) => ({ id: identifier(item?.id), name: display(item?.name || "\u672A\u547D\u540D\u6570\u636E\u8868") })).filter((item) => item.id).slice(0, 100);
+  const items = Array.isArray(data.items) ? data.items : Array.isArray(data.tables) ? data.tables : Array.isArray(data.blocks) ? data.blocks : [];
+  return items.filter((item) => !item?.type || item.type === "table").map((item) => ({
+    id: identifier(item?.table_id || item?.id),
+    name: display(item?.name || item?.table_name || "\u672A\u547D\u540D\u6570\u636E\u8868")
+  })).filter((item) => item.id).slice(0, 100);
 }
 function parseRecentBasesPayload(payload) {
   const data = payload?.data ?? payload ?? {};
@@ -6010,12 +6014,14 @@ function display2(value) {
 
 // src/feishu-cli-result.ts
 var FeishuCliError = class extends Error {
-  constructor(message2, issue) {
+  constructor(message2, issue, actionUrl = "") {
     super(message2);
     this.issue = issue;
+    this.actionUrl = actionUrl;
     this.name = "FeishuCliError";
   }
   issue;
+  actionUrl;
 };
 function parseFeishuCliPayload(value) {
   const start = value.indexOf("{");
@@ -6038,20 +6044,63 @@ function readFeishuUserAuthorization(payload) {
   const missing = /missing|expired|invalid|logged.?out/.test(`${status} ${tokenStatus}`);
   const ready = payload?.ok !== false && data.verified !== false && user.available !== false && !missing && (user.available === true || status === "ready" || Boolean(user.userName || user.name));
   const label = cleanLabel(user.userName || user.name || user.display_name);
+  const scopeKnown = Object.prototype.hasOwnProperty.call(user, "scope") || Object.prototype.hasOwnProperty.call(user, "scopes");
+  const rawScopes = user.scope ?? user.scopes ?? [];
+  const grantedScopes = [...new Set((Array.isArray(rawScopes) ? rawScopes : String(rawScopes).split(/[\s,]+/)).map((scope) => String(scope || "").trim()).filter((scope) => /^[a-z][a-z0-9_.:-]{1,100}$/i.test(scope)))].sort();
   return {
     ready,
     ...label ? { label } : {},
-    message: ready ? "\u4E2A\u4EBA\u6388\u6743\u53EF\u7528" : "\u9700\u8981\u5148\u5B8C\u6210\u4E2A\u4EBA\u6388\u6743\uFF0C\u624D\u80FD\u67E5\u627E\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C"
+    message: ready ? "\u4E2A\u4EBA\u6388\u6743\u53EF\u7528" : "\u9700\u8981\u5148\u5B8C\u6210\u4E2A\u4EBA\u6388\u6743\uFF0C\u624D\u80FD\u67E5\u627E\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C",
+    scopeKnown,
+    grantedScopes
   };
+}
+function missingFeishuAuthorizationScopes(state, requiredScopes) {
+  if (!state.ready || !state.scopeKnown) return [];
+  const granted = new Set(state.grantedScopes);
+  return [...new Set(requiredScopes)].filter((scope) => !granted.has(scope)).sort();
 }
 function isFeishuAuthorizationRequired(error) {
   return error instanceof FeishuCliError && error.issue === "authorization_required";
+}
+function feishuAppPermissionUrl(error) {
+  return error instanceof FeishuCliError && error.issue === "app_permission_required" ? error.actionUrl : "";
+}
+function withFeishuAppPermissionScopes(error, scopes, message2) {
+  if (!(error instanceof FeishuCliError) || error.issue !== "app_permission_required") return error;
+  return new FeishuCliError(message2, error.issue, expandFeishuPermissionUrl(error.actionUrl, scopes));
+}
+function expandFeishuPermissionUrl(value, scopes) {
+  const safe = safeFeishuPermissionUrl(value);
+  if (!safe) return "";
+  const url = new URL(safe);
+  const normalized = [...new Set(scopes.map((scope) => scope.trim()).filter((scope) => /^[a-z][a-z0-9_.:-]{1,100}$/i.test(scope)))];
+  if (normalized.length > 0) url.searchParams.set("scopes", normalized.join(","));
+  return url.toString();
+}
+function safeFeishuPermissionUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    if (url.protocol !== "https:") return "";
+    if (!(/* @__PURE__ */ new Set(["open.feishu.cn", "open.larksuite.com"])).has(url.hostname.toLowerCase())) return "";
+    if (url.pathname !== "/page/scope-apply") return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 function cliError(error) {
   const type = String(error?.type || "").toLowerCase();
   const subtype = String(error?.subtype || "").toLowerCase();
   const message2 = String(error?.message || "").toLowerCase();
   const combined = `${type} ${subtype} ${message2}`;
+  if (/app_scope_not_applied/.test(combined)) {
+    return new FeishuCliError(
+      "\u98DE\u4E66\u5E94\u7528\u5C1A\u672A\u5F00\u901A\u6240\u9009\u5185\u5BB9\u7684\u53EA\u8BFB\u6743\u9650",
+      "app_permission_required",
+      safeFeishuPermissionUrl(error?.console_url || error?.consoleUrl)
+    );
+  }
   if (/token_missing|need_user_authorization|missing_scope|authorization_required|user identity.*missing/.test(combined)) {
     return new FeishuCliError("\u9700\u8981\u5148\u6388\u6743\u98DE\u4E66\uFF0C\u624D\u80FD\u67E5\u627E\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C", "authorization_required");
   }
@@ -6068,6 +6117,14 @@ function cliError(error) {
 }
 function cleanLabel(value) {
   return String(value || "").replace(/[\r\n]+/g, " ").trim().slice(0, 80);
+}
+
+// src/feishu-authorization-flow.ts
+async function runFeishuAuthorizationFlow(input) {
+  await input.begin();
+  input.onWaiting();
+  await input.complete();
+  return input.readState();
 }
 
 // src/feishu-settings.ts
@@ -6092,6 +6149,8 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
   authorizationStarted = false;
   authorizationReady = false;
   authorizationLabel = "";
+  authorizationScopeKnown = false;
+  authorizationScopes = [];
   busy = false;
   chatQuery = "";
   chatCandidates = [];
@@ -6104,6 +6163,7 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
   selectedTableId = "";
   selectedViewId = "";
   baseLookupMessage = "";
+  appPermissionUrl = "";
   onOpen() {
     this.modalEl.addClass("zhixing-feishu-modal");
     void this.load();
@@ -6167,7 +6227,12 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     }
   }
   renderSelections(parent) {
-    if (!this.authorizationReady) this.renderAuthorizationGate(parent);
+    if (!this.authorizationReady || this.missingAuthorizationScopes().length > 0) {
+      this.renderAuthorizationGate(parent);
+      this.renderAppPermissionAction(parent);
+      parent.createDiv({ cls: "zhixing-feishu-privacy", text: "\u5B8C\u6210\u6388\u6743\u540E\uFF0C\u624D\u4F1A\u663E\u793A\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C\u9009\u62E9\u3002\u79C1\u804A\u4E0E\u672A\u9009\u62E9\u7684\u5185\u5BB9\u4E0D\u4F1A\u8FDB\u5165\u77E5\u884C\u53F0\u3002" });
+      return;
+    }
     if (this.config?.modules.messages) {
       const group = parent.createDiv({ cls: "zhixing-feishu-selection" });
       group.createEl("h3", { text: "\u9879\u76EE\u7FA4" });
@@ -6222,6 +6287,7 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
       this.renderBaseCandidates(base);
       this.renderBasePicker(base);
       if (this.baseLookupMessage) base.createDiv({ cls: "zhixing-feishu-base-message", text: this.baseLookupMessage });
+      this.renderAppPermissionAction(base, Boolean(this.pickerBase));
     }
     if (!this.config?.modules.messages && !this.config?.modules.base) {
       const empty = parent.createDiv({ cls: "zhixing-feishu-empty" });
@@ -6247,10 +6313,23 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     }
     const health = this.suite.snapshot().feishu;
     if (health.cli !== "missing") {
-      const auth = parent.createEl("button", { cls: "mod-cta zhixing-feishu-primary", text: this.authorizationStarted ? "\u6211\u5DF2\u5B8C\u6210\u7F51\u9875\u6388\u6743" : this.authorizationReady ? "\u8865\u5145\u6240\u9009\u6A21\u5757\u6743\u9650" : "\u6388\u6743\u6240\u9009\u6A21\u5757" });
-      auth.disabled = this.busy;
-      auth.addEventListener("click", () => void this.authorize());
+      const missingScopes = this.missingAuthorizationScopes();
+      if (this.authorizationReady && missingScopes.length === 0) {
+        const ready = parent.createDiv({ cls: "zhixing-feishu-status is-ready" });
+        (0, import_obsidian3.setIcon)(ready.createSpan(), "badge-check");
+        const copy = ready.createDiv();
+        copy.createEl("strong", { text: "\u6240\u9009\u6A21\u5757\u6743\u9650\u5DF2\u5C31\u7EEA" });
+        copy.createSpan({ text: "\u65E0\u9700\u518D\u6B21\u6388\u6743\uFF0C\u53EF\u4EE5\u76F4\u63A5\u8FDB\u5165\u4E0B\u4E00\u6B65\u3002" });
+      } else {
+        const auth = parent.createEl("button", {
+          cls: "mod-cta zhixing-feishu-primary",
+          text: this.authorizationStarted ? "\u6B63\u5728\u7B49\u5F85\u98DE\u4E66\u6388\u6743" : this.authorizationReady ? "\u8865\u5145\u6240\u9009\u6A21\u5757\u6743\u9650" : "\u8FDE\u63A5\u98DE\u4E66"
+        });
+        auth.disabled = this.busy;
+        auth.addEventListener("click", () => void this.authorize());
+      }
     }
+    this.renderAppPermissionAction(parent);
   }
   renderConfirm(parent) {
     const summary = parent.createDiv({ cls: "zhixing-feishu-confirm" });
@@ -6310,57 +6389,119 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
     this.close();
   }
   async authorize() {
-    if (!this.config) return;
+    if (!this.config || this.busy) return;
     this.busy = true;
+    this.appPermissionUrl = "";
     this.render();
     try {
-      if (this.authorizationStarted) {
-        await this.suite.completeFeishuAuthorization();
-        await this.refreshAuthorization();
-        if (!this.authorizationReady) throw new Error("\u7F51\u9875\u6388\u6743\u5C1A\u672A\u5B8C\u6210\uFF0C\u8BF7\u5148\u5728\u98DE\u4E66\u9875\u9762\u540C\u610F\u6388\u6743");
-        new import_obsidian3.Notice("\u98DE\u4E66\u6388\u6743\u5DF2\u5B8C\u6210");
-        this.authorizationStarted = false;
-      } else {
-        await this.suite.beginFeishuAuthorization(this.config);
-        this.authorizationStarted = true;
-        new import_obsidian3.Notice("\u5DF2\u6253\u5F00\u98DE\u4E66\u6388\u6743\u9875\u9762\uFF0C\u5B8C\u6210\u540E\u56DE\u5230\u8FD9\u91CC\u786E\u8BA4");
-      }
+      const status = await runFeishuAuthorizationFlow({
+        begin: async () => {
+          await this.suite.beginFeishuAuthorization(this.config);
+        },
+        onWaiting: () => {
+          this.authorizationStarted = true;
+          this.render();
+          new import_obsidian3.Notice("\u8BF7\u5728\u98DE\u4E66\u5B98\u65B9\u9875\u9762\u786E\u8BA4\uFF0C\u5B8C\u6210\u540E\u8FD9\u91CC\u4F1A\u81EA\u52A8\u8FDE\u63A5");
+        },
+        complete: async () => {
+          await this.suite.completeFeishuAuthorization();
+        },
+        readState: async () => this.suite.getFeishuUserAuthorization()
+      });
+      this.applyAuthorizationState(status);
+      if (!this.authorizationReady) throw new Error("\u98DE\u4E66\u6CA1\u6709\u786E\u8BA4\u6388\u6743\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5");
+      this.chatLookupMessage = "";
+      this.baseLookupMessage = "";
+      new import_obsidian3.Notice("\u98DE\u4E66\u5DF2\u8FDE\u63A5\uFF0C\u53EF\u4EE5\u5F00\u59CB\u9009\u62E9\u5185\u5BB9");
     } catch (error) {
-      new import_obsidian3.Notice(error instanceof Error ? error.message : String(error));
+      const message2 = this.lookupError(error);
+      new import_obsidian3.Notice(message2);
     } finally {
+      this.authorizationStarted = false;
       this.busy = false;
       this.render();
     }
   }
   renderAuthorizationGate(parent) {
+    const supplement = this.authorizationReady && this.missingAuthorizationScopes().length > 0;
     const gate = parent.createDiv({ cls: "zhixing-feishu-authorization-gate" });
     (0, import_obsidian3.setIcon)(gate.createSpan(), "shield-check");
     const copy = gate.createDiv();
-    copy.createEl("strong", { text: "\u5148\u6388\u6743\uFF0C\u518D\u9009\u62E9\u5185\u5BB9" });
-    copy.createSpan({ text: "\u98DE\u4E66\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C\u5C5E\u4E8E\u4F60\u7684\u4E2A\u4EBA\u53EF\u89C1\u8303\u56F4\uFF0C\u9700\u8981\u7531\u4F60\u6388\u6743\u8BFB\u53D6\u3002" });
+    copy.createEl("strong", { text: this.authorizationStarted ? "\u7B49\u5F85\u98DE\u4E66\u786E\u8BA4" : supplement ? "\u8865\u5145\u6240\u9009\u6A21\u5757\u6743\u9650" : "\u8FDE\u63A5\u98DE\u4E66\u540E\u9009\u62E9\u5185\u5BB9" });
+    copy.createSpan({ text: this.authorizationStarted ? "\u8BF7\u5728\u521A\u6253\u5F00\u7684\u98DE\u4E66\u5B98\u65B9\u9875\u9762\u540C\u610F\u6388\u6743\uFF0C\u5B8C\u6210\u540E\u8FD9\u91CC\u4F1A\u81EA\u52A8\u8FDE\u63A5\u3002" : supplement ? "\u5F53\u524D\u8D26\u53F7\u5DF2\u8FDE\u63A5\uFF0C\u4F46\u65B0\u9009\u62E9\u7684\u6A21\u5757\u8FD8\u7F3A\u5C11\u53EA\u8BFB\u6743\u9650\u3002\u8865\u5145\u5B8C\u6210\u540E\u4F1A\u81EA\u52A8\u7EE7\u7EED\u3002" : "\u70B9\u51FB\u4E00\u6B21\u5373\u53EF\u6253\u5F00\u98DE\u4E66\u5B98\u65B9\u6388\u6743\u9875\u3002\u6388\u6743\u5B8C\u6210\u540E\uFF0C\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C\u9009\u62E9\u4F1A\u81EA\u52A8\u51FA\u73B0\u3002" });
     const button = gate.createEl("button", {
       cls: "mod-cta",
-      text: this.authorizationStarted ? "\u6211\u5DF2\u5B8C\u6210\u6388\u6743" : "\u7ACB\u5373\u6388\u6743"
+      text: this.authorizationStarted ? "\u6B63\u5728\u7B49\u5F85\u6388\u6743" : supplement ? "\u8865\u5145\u6743\u9650" : "\u8FDE\u63A5\u98DE\u4E66"
     });
-    button.disabled = this.busy;
+    button.disabled = this.busy || this.authorizationStarted;
     button.addEventListener("click", () => void this.authorize());
   }
   async refreshAuthorization() {
     try {
       const status = await this.suite.getFeishuUserAuthorization();
-      this.authorizationReady = status.ready;
-      this.authorizationLabel = status.label || "";
+      this.applyAuthorizationState(status);
     } catch {
       this.authorizationReady = false;
       this.authorizationLabel = "";
+      this.authorizationScopeKnown = false;
+      this.authorizationScopes = [];
     }
   }
+  applyAuthorizationState(status) {
+    this.authorizationReady = status.ready;
+    this.authorizationLabel = status.label || "";
+    this.authorizationScopeKnown = status.scopeKnown;
+    this.authorizationScopes = status.grantedScopes;
+  }
+  missingAuthorizationScopes() {
+    if (!this.config) return [];
+    return missingFeishuAuthorizationScopes({
+      ready: this.authorizationReady,
+      label: this.authorizationLabel,
+      message: "",
+      scopeKnown: this.authorizationScopeKnown,
+      grantedScopes: this.authorizationScopes
+    }, this.suite.getRequiredFeishuScopes(this.config));
+  }
   lookupError(error) {
+    const permissionUrl = feishuAppPermissionUrl(error);
+    if (permissionUrl) this.appPermissionUrl = permissionUrl;
     if (isFeishuAuthorizationRequired(error)) {
       this.authorizationReady = false;
+      this.authorizationScopeKnown = false;
+      this.authorizationScopes = [];
       return "\u9700\u8981\u5148\u6388\u6743\u98DE\u4E66\uFF0C\u624D\u80FD\u67E5\u627E\u7FA4\u804A\u548C\u591A\u7EF4\u8868\u683C";
     }
     return error instanceof Error ? error.message : "\u98DE\u4E66\u6682\u65F6\u65E0\u6CD5\u5B8C\u6210\u8FD9\u6B21\u53EA\u8BFB\u67E5\u8BE2\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5";
+  }
+  renderAppPermissionAction(parent, allowRetry = false) {
+    if (!this.appPermissionUrl) return;
+    const action = parent.createDiv({ cls: "zhixing-feishu-app-permission" });
+    (0, import_obsidian3.setIcon)(action.createSpan(), "shield-alert");
+    const copy = action.createDiv();
+    copy.createEl("strong", { text: "\u9700\u8981\u5F00\u901A\u98DE\u4E66\u5E94\u7528\u6743\u9650" });
+    copy.createSpan({ text: "\u5728\u98DE\u4E66\u5B98\u65B9\u9875\u9762\u4E00\u6B21\u5F00\u901A\u591A\u7EF4\u8868\u683C\u7684\u8868\u3001\u89C6\u56FE\u548C\u8BB0\u5F55\u53EA\u8BFB\u6743\u9650\u3002\u5B8C\u6210\u540E\u56DE\u5230\u8FD9\u91CC\u91CD\u65B0\u8BFB\u53D6\u3002" });
+    const buttons = action.createDiv();
+    const open3 = buttons.createEl("button", { cls: "mod-cta", text: "\u5728\u98DE\u4E66\u4E2D\u5F00\u901A" });
+    open3.disabled = this.busy;
+    open3.addEventListener("click", () => void this.openAppPermissionPage());
+    if (allowRetry) {
+      const retry = buttons.createEl("button", { text: "\u91CD\u65B0\u8BFB\u53D6" });
+      retry.disabled = this.busy;
+      retry.addEventListener("click", () => {
+        if (this.pickerBase) void this.chooseBase(this.pickerBase);
+      });
+    }
+  }
+  async openAppPermissionPage() {
+    try {
+      await this.suite.openFeishuPermissionPage(this.appPermissionUrl);
+      this.baseLookupMessage = "\u5DF2\u6253\u5F00\u98DE\u4E66\u5B98\u65B9\u6743\u9650\u9875\u9762\u3002\u5B8C\u6210\u5F00\u901A\u540E\uFF0C\u56DE\u5230\u8FD9\u91CC\u70B9\u51FB\u201C\u91CD\u65B0\u8BFB\u53D6\u201D\u3002";
+      new import_obsidian3.Notice("\u5DF2\u6253\u5F00\u98DE\u4E66\u5B98\u65B9\u6743\u9650\u9875\u9762");
+    } catch (error) {
+      new import_obsidian3.Notice(error instanceof Error ? error.message : String(error));
+    }
+    this.render();
   }
   renderSelectedChats(parent) {
     if (!this.config?.selected_chats.length) return;
@@ -6542,6 +6683,7 @@ var FeishuSetupModal = class extends import_obsidian3.Modal {
   }
   async chooseBase(candidate) {
     this.busy = true;
+    this.appPermissionUrl = "";
     this.pickerBase = candidate;
     this.baseCandidates = [];
     this.baseTables = [];
@@ -9133,6 +9275,42 @@ function toDate3(value) {
   return Number.isFinite(result2.getTime()) ? result2 : /* @__PURE__ */ new Date();
 }
 
+// src/feishu-sync-result.ts
+function parseFeishuSyncResult(value) {
+  const text = String(value || "");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < start) return null;
+  try {
+    const payload = JSON.parse(text.slice(start, end + 1));
+    const status = String(payload?.status || "");
+    if (!(/* @__PURE__ */ new Set(["succeeded", "partial", "failed", "backoff", "disabled"])).has(status)) return null;
+    return {
+      status,
+      accepted: safeCount(payload?.accepted),
+      duplicates: safeCount(payload?.duplicates),
+      failedModules: safeCount(payload?.failed_modules)
+    };
+  } catch {
+    return null;
+  }
+}
+function feishuSyncNotice(result2) {
+  if (result2.status === "partial") {
+    return `\u98DE\u4E66\u5DF2\u540C\u6B65 ${result2.accepted} \u6761\uFF1B${result2.failedModules} \u4E2A\u6A21\u5757\u5F85\u91CD\u8BD5`;
+  }
+  if (result2.status === "succeeded") {
+    return result2.accepted > 0 ? `\u98DE\u4E66\u540C\u6B65\u5B8C\u6210\uFF1A\u65B0\u589E ${result2.accepted} \u6761` : "\u98DE\u4E66\u540C\u6B65\u5B8C\u6210\uFF0C\u6CA1\u6709\u65B0\u589E\u5185\u5BB9";
+  }
+  if (result2.status === "disabled") return "\u98DE\u4E66\u540C\u6B65\u5C1A\u672A\u5F00\u542F";
+  if (result2.status === "backoff") return "\u98DE\u4E66\u6B63\u5728\u7B49\u5F85\u81EA\u52A8\u91CD\u8BD5";
+  return "\u98DE\u4E66\u540C\u6B65\u672A\u5B8C\u6210\uFF0C\u5DF2\u4FDD\u7559\u5931\u8D25\u72B6\u6001\u5E76\u7B49\u5F85\u91CD\u8BD5";
+}
+function safeCount(value) {
+  const count2 = Number(value || 0);
+  return Number.isFinite(count2) && count2 > 0 ? Math.floor(count2) : 0;
+}
+
 // src/suite-service.ts
 var execFileAsync4 = (0, import_node_util4.promisify)(import_node_child_process4.execFile);
 var RECEIVER_PORT = 43123;
@@ -9173,6 +9351,7 @@ var SuiteService = class {
   health;
   scheduleTimer;
   feishuDeviceCode = "";
+  nodeExecutable;
   codexExecutable;
   larkExecutable;
   scheduledWork;
@@ -9236,7 +9415,7 @@ var SuiteService = class {
     }
   }
   async runKnowledgeNow() {
-    if (!this.programRoot || !this.health.organizer.executor.supported || this.health.running) {
+    if (!this.programRoot || !this.nodeExecutable || !this.health.organizer.executor.supported || this.health.running) {
       if (!this.health.running) new import_obsidian5.Notice("\u77E5\u8BC6\u6574\u7406\u6267\u884C\u5668\u5C1A\u672A\u5C31\u7EEA\uFF0C\u8BF7\u5728\u72B6\u6001\u63D0\u793A\u4E2D\u67E5\u770B\u539F\u56E0");
       return;
     }
@@ -9248,10 +9427,9 @@ var SuiteService = class {
       onAcquired: async () => this.setHealth({ running: true }),
       runKnowledge: async () => {
         await this.runFeishuSyncNow(false);
-        await execFileAsync4(process.execPath, [runner, "--vault", vault, "--trigger", "manual"], {
+        await execFileAsync4(this.nodeExecutable, [runner, "--vault", vault, "--trigger", "manual"], {
           env: {
             ...process.env,
-            ELECTRON_RUN_AS_NODE: "1",
             ZHIXING_CAPTURE_DISABLED: "1",
             ...this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}
           },
@@ -9295,11 +9473,11 @@ var SuiteService = class {
     const runtimeHealth = {
       source_type: "knowledge_runtime_v1",
       configured: Boolean(this.programRoot),
-      supported: Boolean(this.programRoot),
-      last_seen_at: this.programRoot ? now : null,
+      supported: Boolean(this.programRoot && this.nodeExecutable),
+      last_seen_at: this.programRoot && this.nodeExecutable ? now : null,
       last_event_at: typeof lastCycle?.finished_at === "string" ? lastCycle.finished_at : null,
       stale: false,
-      error: this.programRoot ? null : "\u77E5\u884C\u53F0\u77E5\u8BC6\u8FD0\u884C\u65F6\u7F3A\u5931"
+      error: !this.programRoot ? "\u77E5\u884C\u53F0\u77E5\u8BC6\u8FD0\u884C\u65F6\u7F3A\u5931" : this.nodeExecutable ? null : "\u77E5\u884C\u53F0\u8FD0\u884C\u7A0B\u5E8F\u7F3A\u5931\uFF0C\u8BF7\u91CD\u65B0\u5B89\u88C5\u77E5\u884C\u53F0"
     };
     const executorHealth = {
       source_type: "codex_exec_v1",
@@ -9364,6 +9542,9 @@ var SuiteService = class {
     }, this.larkExecutable);
     return readFeishuUserAuthorization(parseFeishuCliPayload(`${result2.stdout}
 ${result2.stderr}`));
+  }
+  getRequiredFeishuScopes(config) {
+    return feishuScopes(config);
   }
   async saveFeishuConfig(value) {
     const config = normalizeFeishuConfig(value);
@@ -9450,42 +9631,54 @@ ${result2.stderr}`));
     return candidates;
   }
   async listFeishuBaseTables(baseToken) {
-    const result2 = await executeLarkCli([
-      "base",
-      "+base-block-list",
-      "--base-token",
-      baseToken,
-      "--type",
-      "table",
-      "--as",
-      "user",
-      "--json"
-    ], feishuReadOptions(), this.larkExecutable);
-    const tables = parseBaseTablesPayload(parseFeishuCliPayload(`${result2.stdout}
+    try {
+      const result2 = await executeLarkCli([
+        "base",
+        "+table-list",
+        "--base-token",
+        baseToken,
+        "--as",
+        "user",
+        "--json"
+      ], feishuReadOptions(), this.larkExecutable);
+      const tables = parseBaseTablesPayload(parseFeishuCliPayload(`${result2.stdout}
 ${result2.stderr}`));
-    if (tables.length === 0) throw new Error("\u8FD9\u4E2A\u591A\u7EF4\u8868\u683C\u4E2D\u6CA1\u6709\u53EF\u9009\u62E9\u7684\u6570\u636E\u8868");
-    return tables;
+      if (tables.length === 0) throw new Error("\u8FD9\u4E2A\u591A\u7EF4\u8868\u683C\u4E2D\u6CA1\u6709\u53EF\u9009\u62E9\u7684\u6570\u636E\u8868");
+      return tables;
+    } catch (error) {
+      throw withFeishuAppPermissionScopes(error, baseReadScopes(), "\u98DE\u4E66\u5E94\u7528\u5C1A\u672A\u5F00\u901A\u591A\u7EF4\u8868\u683C\u53EA\u8BFB\u6743\u9650");
+    }
   }
   async listFeishuBaseViews(baseToken, tableId) {
-    const result2 = await executeLarkCli([
-      "base",
-      "+view-list",
-      "--base-token",
-      baseToken,
-      "--table-id",
-      tableId,
-      "--as",
-      "user",
-      "--json"
-    ], feishuReadOptions(), this.larkExecutable);
-    const views = parseBaseViewsPayload(parseFeishuCliPayload(`${result2.stdout}
+    try {
+      const result2 = await executeLarkCli([
+        "base",
+        "+view-list",
+        "--base-token",
+        baseToken,
+        "--table-id",
+        tableId,
+        "--as",
+        "user",
+        "--json"
+      ], feishuReadOptions(), this.larkExecutable);
+      const views = parseBaseViewsPayload(parseFeishuCliPayload(`${result2.stdout}
 ${result2.stderr}`));
-    if (views.length === 0) throw new Error("\u8FD9\u4E2A\u6570\u636E\u8868\u4E2D\u6CA1\u6709\u53EF\u9009\u62E9\u7684\u89C6\u56FE");
-    return views;
+      if (views.length === 0) throw new Error("\u8FD9\u4E2A\u6570\u636E\u8868\u4E2D\u6CA1\u6709\u53EF\u9009\u62E9\u7684\u89C6\u56FE");
+      return views;
+    } catch (error) {
+      throw withFeishuAppPermissionScopes(error, baseReadScopes(), "\u98DE\u4E66\u5E94\u7528\u5C1A\u672A\u5F00\u901A\u591A\u7EF4\u8868\u683C\u53EA\u8BFB\u6743\u9650");
+    }
+  }
+  async openFeishuPermissionPage(value) {
+    const url = safeFeishuPermissionUrl(value);
+    if (!url) throw new Error("\u98DE\u4E66\u6CA1\u6709\u8FD4\u56DE\u53EF\u7528\u7684\u5B98\u65B9\u6743\u9650\u9875\u9762");
+    await import_electron2.shell.openExternal(url);
   }
   async beginFeishuAuthorization(config) {
     const scopes = feishuScopes(config);
     if (scopes.length === 0) throw new Error("\u8BF7\u5148\u9009\u62E9\u81F3\u5C11\u4E00\u4E2A\u98DE\u4E66\u6A21\u5757");
+    this.feishuDeviceCode = "";
     const result2 = await executeLarkCli(["auth", "login", "--scope", scopes.join(" "), "--no-wait", "--json"], {
       timeout: 3e4,
       windowsHide: true,
@@ -9503,26 +9696,34 @@ ${result2.stderr}`);
   }
   async completeFeishuAuthorization() {
     if (!this.feishuDeviceCode) throw new Error("\u8BF7\u5148\u5F00\u59CB\u98DE\u4E66\u6388\u6743");
-    await executeLarkCli(["auth", "login", "--device-code", this.feishuDeviceCode, "--json"], {
-      timeout: 10 * 6e4,
-      windowsHide: true,
-      maxBuffer: 2 * 1024 * 1024,
-      env: larkCliEnv()
-    }, this.larkExecutable);
-    this.feishuDeviceCode = "";
-    await this.refreshHealth();
+    const deviceCode = this.feishuDeviceCode;
+    try {
+      await executeLarkCli(["auth", "login", "--device-code", deviceCode, "--json"], {
+        timeout: 10 * 6e4,
+        windowsHide: true,
+        maxBuffer: 2 * 1024 * 1024,
+        env: larkCliEnv()
+      }, this.larkExecutable);
+      await this.refreshHealth();
+    } finally {
+      this.feishuDeviceCode = "";
+    }
   }
   async runFeishuSyncNow(notify = true) {
     if (!this.programRoot || this.health.feishu.syncing) return;
+    if (!this.nodeExecutable) {
+      if (notify) new import_obsidian5.Notice("\u98DE\u4E66\u540C\u6B65\u7A0B\u5E8F\u7F3A\u5931\uFF0C\u8BF7\u91CD\u65B0\u5B89\u88C5\u77E5\u884C\u53F0");
+      return;
+    }
     const config = await this.getFeishuConfig();
     if (!config.enabled) return;
     const runner = import_node_path12.default.join(this.programRoot, "runtime", "feishu-cli.mjs");
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "\u6B63\u5728\u540C\u6B65\u98DE\u4E66" } });
+    let syncResult = null;
     try {
-      await execFileAsync4(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
+      const execution = await execFileAsync4(this.nodeExecutable, [runner, "--vault", this.vaultBasePath(), "--force"], {
         env: {
           ...process.env,
-          ELECTRON_RUN_AS_NODE: "1",
           ZHIXING_CAPTURE_DISABLED: "1",
           ...this.larkExecutable ? { LARK_CLI_BIN: this.larkExecutable } : {}
         },
@@ -9530,14 +9731,18 @@ ${result2.stderr}`);
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024
       });
-      if (notify) new import_obsidian5.Notice("\u98DE\u4E66\u53EA\u8BFB\u540C\u6B65\u5B8C\u6210\uFF0C\u65B0\u589E\u5185\u5BB9\u5DF2\u8FDB\u5165\u6574\u7406\u961F\u5217");
+      syncResult = parseFeishuSyncResult(execution.stdout);
     } catch (error) {
-      console.error("Zhixing Feishu sync failed", safeCommandError(error));
-      if (notify) new import_obsidian5.Notice("\u98DE\u4E66\u540C\u6B65\u672A\u5B8C\u6210\uFF0C\u5DF2\u4FDD\u7559\u5931\u8D25\u72B6\u6001\u5E76\u7B49\u5F85\u91CD\u8BD5");
+      syncResult = parseFeishuSyncResult(`${String(error?.stdout || "")}
+${String(error?.stderr || "")}`);
+      if (!syncResult || syncResult.status === "failed") {
+        console.error("Zhixing Feishu sync failed", safeCommandError(error));
+      }
     } finally {
       this.setHealth({ feishu: { ...this.health.feishu, syncing: false } });
       await this.refreshHealth();
     }
+    if (notify) new import_obsidian5.Notice(syncResult ? feishuSyncNotice(syncResult) : "\u98DE\u4E66\u540C\u6B65\u672A\u5B8C\u6210\uFF0C\u5DF2\u4FDD\u7559\u5931\u8D25\u72B6\u6001\u5E76\u7B49\u5F85\u91CD\u8BD5");
   }
   async clearFeishuCache() {
     const target = "raw/feishu";
@@ -9662,6 +9867,7 @@ ${result2.stderr}`);
   }
   async findProgramRoot() {
     const install = await readJson2(import_node_path12.default.join(configRoot(), "install.json"), null);
+    this.nodeExecutable = typeof install?.node_path === "string" && install.node_path.trim() ? install.node_path : void 0;
     if (typeof install?.program_root === "string") {
       const runner = import_node_path12.default.join(install.program_root, "runtime", "run-cycle.mjs");
       try {
@@ -9697,7 +9903,7 @@ ${result2.stderr}`);
         if (!this.programRoot) throw new Error("\u77E5\u884C\u53F0\u77E5\u8BC6\u8FD0\u884C\u65F6\u7F3A\u5931");
         this.setHealth({ running: true });
         try {
-          await execFileAsync4(process.execPath, [
+          await execFileAsync4(this.nodeExecutable, [
             import_node_path12.default.join(this.programRoot, "runtime", "run-cycle.mjs"),
             "--vault",
             vault,
@@ -9706,7 +9912,6 @@ ${result2.stderr}`);
           ], {
             env: {
               ...process.env,
-              ELECTRON_RUN_AS_NODE: "1",
               ZHIXING_CAPTURE_DISABLED: "1",
               ...this.codexExecutable ? { CODEX_BIN: this.codexExecutable } : {}
             },
@@ -9953,6 +10158,9 @@ function normalizeFeishuConfig(value) {
 }
 function feishuScopes(config) {
   return [...new Set(Object.entries(config.modules).filter(([, enabled]) => enabled).flatMap(([module2]) => FEISHU_SCOPE_MAP[module2] || []))].sort();
+}
+function baseReadScopes() {
+  return (FEISHU_SCOPE_MAP.base || []).filter((scope) => scope.startsWith("base:"));
 }
 async function countPendingFeishu(vault) {
   const processed = /* @__PURE__ */ new Set();

@@ -49,10 +49,13 @@ describe("飞书 Base 选择器", () => {
   });
 
   it("只保留真实数据表和视图", () => {
-    expect(parseBaseTablesPayload({ data: { blocks: [
-      { id: "tbl_one", name: "任务表", type: "table" },
-      { id: "dash_one", name: "仪表盘", type: "dashboard" }
+    expect(parseBaseTablesPayload({ data: { items: [
+      { table_id: "tbl_one", name: "任务表" }
     ] } })).toEqual([{ id: "tbl_one", name: "任务表" }]);
+    expect(parseBaseTablesPayload({ data: { blocks: [
+      { id: "tbl_two", name: "历史任务", type: "table" },
+      { id: "dash_one", name: "仪表盘", type: "dashboard" }
+    ] } })).toEqual([{ id: "tbl_two", name: "历史任务" }]);
     expect(parseBaseViewsPayload({ data: { views: [
       { id: "vew_one", name: "默认视图", type: "grid" }
     ] } })).toEqual([{ id: "vew_one", name: "默认视图", type: "grid" }]);

@@ -38,6 +38,18 @@ describe("knowledge semantic renderer", () => {
     expect(rendered.memory_update.content).toContain("[[Obsidian/网页采集接收器的恢复与验证]]");
   });
 
+  it("日期开头的完整经历段落不会被误判为编号列表", () => {
+    const input = succeeded();
+    input.memory_document.sections.action =
+      "2026-08-13 的实时跟踪中，我先读取关键模块和最近上下文，再把问题、实现方式、用户结果与验证阶段写成一段完整说明，避免只报告文件数量。";
+    expect(() => renderSemanticOutcome({
+      topic: topic(),
+      pairs: [pair("new")],
+      outcome: input,
+      now: "2026-08-14"
+    })).not.toThrow();
+  });
+
   it("增量更新复用路径和稳定 ID，并保留全部历史来源与用户补充", () => {
     const oldEvidence = [
       "---",

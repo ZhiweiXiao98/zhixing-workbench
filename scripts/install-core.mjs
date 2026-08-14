@@ -22,7 +22,7 @@ const LEGACY_TASK_NAMES = [
   "Codex - Obsidian Daily Ingest"
 ];
 
-export const VERSION = "0.6.8";
+export const VERSION = "0.6.14";
 export const OWNED_SKILLS = ["obsidian-knowledge", "investigate-work-history", "zhixing-manager"];
 
 export async function installSuite(options = {}) {
@@ -91,6 +91,7 @@ export async function installSuite(options = {}) {
       arch: process.arch,
       vault_root: vault,
       program_root: programRoot,
+      node_path: process.execPath,
       browser_extension_root: browserChange.target,
       browser_extension_sha256: await hashDirectory(browserChange.target),
       receiver_port: device.receiver_port,

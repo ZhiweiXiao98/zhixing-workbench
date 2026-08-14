@@ -236,7 +236,10 @@ export function normalizeFeishuResource(module, item, context = {}) {
 function selectionsFor(module, config, minuteTokens) {
   if (module === "base") return config.selected_bases;
   if (module === "messages") return config.selected_chats;
-  if (module === "approvals") return [{ topic: 2, label: "已办审批" }, { topic: 3, label: "已发起审批" }];
+  if (module === "approvals") return [
+    { kind: "completed", topic: 2, label: "已办审批" },
+    { kind: "initiated", label: "已发起审批" }
+  ];
   if (module === "minutes") {
     const tokens = [...minuteTokens];
     return tokens.length ? chunk(tokens, 50).map((minute_tokens) => ({ minute_tokens, label: "会议纪要" })) : [];
