@@ -62,6 +62,11 @@ test("飞书命令白名单拒绝所有写操作", () => {
     since: "2026-07-01T00:00:00Z",
     now: "2026-08-01T00:00:00Z"
   })));
+  assert.doesNotThrow(() => assertReadOnlyArgs(commandFor("approvals", {
+    selection: { kind: "initiated" },
+    since: "2026-07-01T00:00:00Z",
+    now: "2026-08-01T00:00:00Z"
+  })));
   assert.throws(() => assertReadOnlyArgs(["task", "tasks", "create", "--yes"]), /只读白名单|禁止写操作/);
   assert.throws(() => assertReadOnlyArgs(["approval", "tasks", "approve", "--yes"]), /只读白名单|禁止写操作/);
   assert.doesNotThrow(() => assertReadOnlyArgs(["docs", "+fetch", "--as", "user", "--doc", "doc_fictional", "--json"]));
@@ -83,6 +88,39 @@ test("官方 CLI 驱动为文档和审批补充有权读取的正文详情", asy
   assert.match(documents.items[0].fetched_content, /正文/);
   assert.equal(approvals.items[0].approval_detail.status, "通过");
   assert.ok(calls.every((args) => !args.includes("--yes")));
+});
+
+test("无录制文件的会议仍作为正常会议同步", async () => {
+  const driver = new LarkCliDriver({ bin: "fictional-lark-cli", exec: async (_bin, args) => {
+    if (args[1] === "+search") return jsonResult({
+      ok: true,
+      data: { meetings: [{ meeting_id: "meeting-one", title: "虚构会议" }], has_more: false, page_token: "terminal-token" }
+    });
+    if (args[1] === "+recording") return jsonResult({
+      ok: false,
+      data: { recordings: [{ meeting_id: "meeting-one", error: "data not exist" }] }
+    });
+    throw new Error("未处理的虚构命令");
+  } });
+  const page = await driver.list("meetings", {
+    module: "meetings",
+    currentUserId: "ou_fictional",
+    since: "2026-08-01T00:00:00Z",
+    now: "2026-08-06T00:00:00Z"
+  });
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].title, "虚构会议");
+  assert.equal(page.nextPage, undefined);
+});
+
+test("已发起审批使用专用只读接口而非无效 topic", () => {
+  const command = commandFor("approvals", {
+    selection: { kind: "initiated" },
+    since: "2026-08-01T00:00:00Z",
+    now: "2026-08-06T00:00:00Z"
+  });
+  assert.deepEqual(command.slice(0, 3), ["approval", "instances", "initiated"]);
+  assert.ok(!command.includes("--topic"));
 });
 
 test("官方 CLI 登录状态只向连接器暴露显示名和作用域计算所需字段", async () => {
@@ -275,7 +313,7 @@ function fixtureDriver(options = {}) {
       if (module === "minutes") return { items: [{ minute_token: "minute-one", title: "虚构评审会纪要", update_time: "2026-08-06T03:10:00Z", summary: "决定采用分批发布，并由测试人员完成验收。", todos: ["补充回滚演练"] }] };
       if (module === "documents") return { items: [{ document_id: "doc-one", title: "虚构发布说明", edit_time: "2026-08-06T04:00:00Z", summary: "记录发布步骤和验证结果。", url: "https://example.invalid/docs/doc-one" }] };
       if (module === "base") return { items: [{ record_id: "record-one", title: "虚构需求", update_time: "2026-08-06T05:00:00Z", status: "推进中", fields: { 标题: "虚构需求", 状态: "推进中" } }], nextPage: undefined };
-      if (module === "approvals") return { items: [{ instance_code: `approval-${request.selection.topic}`, definition_name: "虚构发布审批", update_time: "2026-08-06T06:00:00Z", status: "通过", result: "允许发布虚构版本" }] };
+      if (module === "approvals") return { items: [{ instance_code: `approval-${request.selection.kind || request.selection.topic}`, definition_name: "虚构发布审批", update_time: "2026-08-06T06:00:00Z", status: "通过", result: "允许发布虚构版本" }] };
       if (module === "messages") return { items: [
         { message_id: "message-one", sender_id: "ou_private_fixture", chat_type: "group", create_time: "2026-08-06T07:00:00Z", update_time: "2026-08-06T07:00:00Z", text: "结论：虚构版本已验证，可以发布。" },
         { message_id: "message-chatter", sender_id: "ou_other", chat_type: "group", create_time: "2026-08-06T07:01:00Z", text: "收到" }

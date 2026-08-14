@@ -35,6 +35,7 @@ import {
   withFeishuAppPermissionScopes,
   type FeishuUserAuthorizationState
 } from "./feishu-cli-result";
+import { feishuSyncNotice, parseFeishuSyncResult, type FeishuSyncResult } from "./feishu-sync-result";
 
 const execFileAsync = promisify(execFile);
 const RECEIVER_PORT = 43123;
@@ -514,22 +515,26 @@ export class SuiteService {
     if (!config.enabled) return;
     const runner = path.join(this.programRoot, "runtime", "feishu-cli.mjs");
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "正在同步飞书" } });
+    let syncResult: FeishuSyncResult | null = null;
     try {
-      await execFileAsync(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
+      const execution = await execFileAsync(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ZHIXING_CAPTURE_DISABLED: "1",
           ...(this.larkExecutable ? { LARK_CLI_BIN: this.larkExecutable } : {}) },
         timeout: 30 * 60_000,
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024
       });
-      if (notify) new Notice("飞书只读同步完成，新增内容已进入整理队列");
-    } catch (error) {
-      console.error("Zhixing Feishu sync failed", safeCommandError(error));
-      if (notify) new Notice("飞书同步未完成，已保留失败状态并等待重试");
+      syncResult = parseFeishuSyncResult(execution.stdout);
+    } catch (error: any) {
+      syncResult = parseFeishuSyncResult(`${String(error?.stdout || "")}\n${String(error?.stderr || "")}`);
+      if (!syncResult || syncResult.status === "failed") {
+        console.error("Zhixing Feishu sync failed", safeCommandError(error));
+      }
     } finally {
       this.setHealth({ feishu: { ...this.health.feishu, syncing: false } });
       await this.refreshHealth();
     }
+    if (notify) new Notice(syncResult ? feishuSyncNotice(syncResult) : "飞书同步未完成，已保留失败状态并等待重试");
   }
 
   async clearFeishuCache(): Promise<void> {

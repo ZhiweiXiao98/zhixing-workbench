@@ -17,6 +17,7 @@ const READ_COMMANDS = new Set([
   "docs +fetch",
   "base +record-list",
   "approval tasks query",
+  "approval instances initiated",
   "approval instances get",
   "im +chat-messages-list",
   "im +chat-search"
@@ -165,7 +166,7 @@ export class LarkCliDriver {
       maxBuffer: 16 * 1024 * 1024,
       env: notifierFreeEnv()
     });
-    return checkedPayload(parseJsonOutput(`${stdout || ""}\n${stderr || ""}`));
+    return checkedPayload(normalizeOptionalReadPayload(args, parseJsonOutput(`${stdout || ""}\n${stderr || ""}`)));
   }
 
   async writeAuthorization(args) {
@@ -219,9 +220,14 @@ export function commandFor(module, request = {}) {
         "--table-id", selection.table_id, "--view-id", selection.view_id, "--offset", String(offset),
         "--limit", "100", ...fields, "--json"];
     }
-    case "approvals": return ["approval", "tasks", "query", "--as", "user", "--topic", String(request.selection?.topic || 2),
-      "--start-timestamp", String(Math.floor(Date.parse(since) / 1000)), "--end-timestamp", String(Math.floor(Date.parse(request.now || new Date().toISOString()) / 1000)),
-      "--page-size", "100", "--json", ...page];
+    case "approvals": {
+      const range = ["--start-timestamp", String(Math.floor(Date.parse(since) / 1000)),
+        "--end-timestamp", String(Math.floor(Date.parse(request.now || new Date().toISOString()) / 1000)),
+        "--page-size", "100", "--json", ...page];
+      return request.selection?.kind === "initiated"
+        ? ["approval", "instances", "initiated", "--as", "user", ...range]
+        : ["approval", "tasks", "query", "--as", "user", "--topic", "2", ...range];
+    }
     case "messages": {
       const chat = request.selection || {};
       if (!chat.chat_id || chat.type !== "project_group") return null;
@@ -242,7 +248,7 @@ function pageFromPayload(payload, request) {
     const offset = Number(request.pageToken || 0);
     return { items, nextPage: hasMore ? String(offset + Math.max(1, items.length)) : undefined };
   }
-  return { items, nextPage: next ? String(next) : undefined };
+  return { items, nextPage: hasMore && next ? String(next) : undefined };
 }
 
 function findItems(value) {
@@ -295,6 +301,20 @@ function checkedPayload(payload) {
     retryAfterMs: rateLimited ? retryAfter(error) : undefined,
     permanent: missingScopes.length > 0 || authExpired || permission
   });
+}
+
+function normalizeOptionalReadPayload(args, payload) {
+  if (args[0] !== "vc" || args[1] !== "+recording" || payload?.ok !== false || !Array.isArray(payload?.data?.recordings)) {
+    return payload;
+  }
+  return {
+    ...payload,
+    ok: true,
+    data: {
+      ...payload.data,
+      recordings: payload.data.recordings.filter((item) => item && !item.error)
+    }
+  };
 }
 
 function parseJsonOutput(value) {

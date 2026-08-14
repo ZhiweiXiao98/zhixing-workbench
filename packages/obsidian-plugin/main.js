@@ -9275,6 +9275,42 @@ function toDate3(value) {
   return Number.isFinite(result2.getTime()) ? result2 : /* @__PURE__ */ new Date();
 }
 
+// src/feishu-sync-result.ts
+function parseFeishuSyncResult(value) {
+  const text = String(value || "");
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end < start) return null;
+  try {
+    const payload = JSON.parse(text.slice(start, end + 1));
+    const status = String(payload?.status || "");
+    if (!(/* @__PURE__ */ new Set(["succeeded", "partial", "failed", "backoff", "disabled"])).has(status)) return null;
+    return {
+      status,
+      accepted: safeCount(payload?.accepted),
+      duplicates: safeCount(payload?.duplicates),
+      failedModules: safeCount(payload?.failed_modules)
+    };
+  } catch {
+    return null;
+  }
+}
+function feishuSyncNotice(result2) {
+  if (result2.status === "partial") {
+    return `\u98DE\u4E66\u5DF2\u540C\u6B65 ${result2.accepted} \u6761\uFF1B${result2.failedModules} \u4E2A\u6A21\u5757\u5F85\u91CD\u8BD5`;
+  }
+  if (result2.status === "succeeded") {
+    return result2.accepted > 0 ? `\u98DE\u4E66\u540C\u6B65\u5B8C\u6210\uFF1A\u65B0\u589E ${result2.accepted} \u6761` : "\u98DE\u4E66\u540C\u6B65\u5B8C\u6210\uFF0C\u6CA1\u6709\u65B0\u589E\u5185\u5BB9";
+  }
+  if (result2.status === "disabled") return "\u98DE\u4E66\u540C\u6B65\u5C1A\u672A\u5F00\u542F";
+  if (result2.status === "backoff") return "\u98DE\u4E66\u6B63\u5728\u7B49\u5F85\u81EA\u52A8\u91CD\u8BD5";
+  return "\u98DE\u4E66\u540C\u6B65\u672A\u5B8C\u6210\uFF0C\u5DF2\u4FDD\u7559\u5931\u8D25\u72B6\u6001\u5E76\u7B49\u5F85\u91CD\u8BD5";
+}
+function safeCount(value) {
+  const count2 = Number(value || 0);
+  return Number.isFinite(count2) && count2 > 0 ? Math.floor(count2) : 0;
+}
+
 // src/suite-service.ts
 var execFileAsync4 = (0, import_node_util4.promisify)(import_node_child_process4.execFile);
 var RECEIVER_PORT = 43123;
@@ -9679,8 +9715,9 @@ ${result2.stderr}`);
     if (!config.enabled) return;
     const runner = import_node_path12.default.join(this.programRoot, "runtime", "feishu-cli.mjs");
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "\u6B63\u5728\u540C\u6B65\u98DE\u4E66" } });
+    let syncResult = null;
     try {
-      await execFileAsync4(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
+      const execution = await execFileAsync4(process.execPath, [runner, "--vault", this.vaultBasePath(), "--force"], {
         env: {
           ...process.env,
           ELECTRON_RUN_AS_NODE: "1",
@@ -9691,14 +9728,18 @@ ${result2.stderr}`);
         windowsHide: true,
         maxBuffer: 8 * 1024 * 1024
       });
-      if (notify) new import_obsidian5.Notice("\u98DE\u4E66\u53EA\u8BFB\u540C\u6B65\u5B8C\u6210\uFF0C\u65B0\u589E\u5185\u5BB9\u5DF2\u8FDB\u5165\u6574\u7406\u961F\u5217");
+      syncResult = parseFeishuSyncResult(execution.stdout);
     } catch (error) {
-      console.error("Zhixing Feishu sync failed", safeCommandError(error));
-      if (notify) new import_obsidian5.Notice("\u98DE\u4E66\u540C\u6B65\u672A\u5B8C\u6210\uFF0C\u5DF2\u4FDD\u7559\u5931\u8D25\u72B6\u6001\u5E76\u7B49\u5F85\u91CD\u8BD5");
+      syncResult = parseFeishuSyncResult(`${String(error?.stdout || "")}
+${String(error?.stderr || "")}`);
+      if (!syncResult || syncResult.status === "failed") {
+        console.error("Zhixing Feishu sync failed", safeCommandError(error));
+      }
     } finally {
       this.setHealth({ feishu: { ...this.health.feishu, syncing: false } });
       await this.refreshHealth();
     }
+    if (notify) new import_obsidian5.Notice(syncResult ? feishuSyncNotice(syncResult) : "\u98DE\u4E66\u540C\u6B65\u672A\u5B8C\u6210\uFF0C\u5DF2\u4FDD\u7559\u5931\u8D25\u72B6\u6001\u5E76\u7B49\u5F85\u91CD\u8BD5");
   }
   async clearFeishuCache() {
     const target = "raw/feishu";
