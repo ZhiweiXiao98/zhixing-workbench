@@ -326,13 +326,24 @@ function sectionText(sections, key, label) {
 }
 
 function memorySectionText(sections, key, label) {
-  const value = sectionText(sections, key, label);
+  const value = plainMemoryLanguage(sectionText(sections, key, label));
   if (value.replace(/\s+/g, "").length < 40 ||
       !value.split(/\r?\n/).some((line) =>
-        line.trim().length >= 40 && !/^(?:[-*+]\s|\d+[.)、]\s?)/.test(line.trim()))) {
+        line.trim().length >= 40 && !/^(?:[-*+]\s|\d+[.)、](?!\d))/.test(line.trim()))) {
     throw new Error(`语义结果的“${label}”需要用完整自然段讲清楚`);
   }
   return value;
+}
+
+function plainMemoryLanguage(value) {
+  return String(value)
+    .replaceAll("漂移重校验", "状态变化后重新检查")
+    .replaceAll("权威状态", "唯一可信状态")
+    .replaceAll("自证授权", "明确授权")
+    .replaceAll("技术边界", "适用范围")
+    .replaceAll("纵切片", "分阶段路径")
+    .replaceAll("闭环", "完整处理")
+    .replaceAll("收口", "整理完成");
 }
 
 function unknownSections(content, managedHeadings) {

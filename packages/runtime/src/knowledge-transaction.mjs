@@ -98,7 +98,8 @@ async function prepareRun(vaultRoot, options) {
     retryBackoffHours: options["retry-backoff-hours"],
     laneOffset: ((positiveInteger(options["batch-index"]) || 1) - 1) % 3,
     now: options.now,
-    pendingPairIds
+    pendingPairIds,
+    compactBacklog: Boolean(options["compact-backlog"])
   });
   const contractPath = path.join(vaultRoot, "raw", "codex", "ingest-run-contract.json");
   const resultPath = path.join(vaultRoot, "raw", "codex", "staging", `${runId}.json`);
@@ -606,7 +607,8 @@ async function compileCurrentQueue(vaultRoot, contract, processed, settlements) 
     quietHours: contract.queue?.quiet_hours,
     recentHours: contract.queue?.recent_hours,
     retryBackoffHours: contract.queue?.retry_backoff_hours,
-    pendingPairIds
+    pendingPairIds,
+    compactBacklog: Boolean(contract.queue?.compact_backlog)
   }).queue;
 }
 
@@ -826,7 +828,9 @@ function validateEvidenceContent(content, pairs, dailyPaths, existing, memoryPat
 
 function validateMemoryContent(content, digest, evidencePaths, existing) {
   const title = content.match(/^#\s+(.+)$/m)?.[1]?.trim() || "";
-  if (!title || /#\d+|\b[A-Za-z]+[a-z][A-Z][A-Za-z]*\b/.test(title)) {
+  const hasChineseContext = /[\p{Script=Han}]{2,}/u.test(title);
+  if (!title || /#\d+/.test(title) ||
+      (!hasChineseContext && /\b[A-Za-z]+[a-z][A-Z][A-Za-z]*\b/.test(title))) {
     throw new Error("经历文章标题必须是自然中文，不能直接使用 Issue 编号或代码类名");
   }
   if (!frontmatterValue(content, "zhixing_memory_id") ||
@@ -849,7 +853,7 @@ function validateMemoryContent(content, digest, evidencePaths, existing) {
     }
     if (heading !== "需要追溯时" && !section.split(/\r?\n/)
       .some((line) => line.trim().length >= 40 &&
-        !/^(?:[-*+]\s|\d+[.)、]\s?)/.test(line.trim()))) {
+        !/^(?:[-*+]\s|\d+[.)、](?!\d))/.test(line.trim()))) {
       throw new Error(`经历文章的“${heading}”至少需要一个自然段，不能只列清单`);
     }
   }

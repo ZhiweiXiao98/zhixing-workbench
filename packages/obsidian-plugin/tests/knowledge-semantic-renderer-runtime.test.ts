@@ -50,6 +50,34 @@ describe("knowledge semantic renderer", () => {
     })).not.toThrow();
   });
 
+  it("版本号开头的完整经历段落不会被误判为编号列表", () => {
+    const input = succeeded();
+    input.memory_document.sections.result =
+      "0.6.1 已完成 Windows、macOS 与 Ubuntu 的安装验证，公开资产校验一致，仍未覆盖的真实迁移会继续作为单独验收事项。";
+    expect(() => renderSemanticOutcome({
+      topic: topic(),
+      pairs: [pair("new")],
+      outcome: input,
+      now: "2026-08-14"
+    })).not.toThrow();
+  });
+
+  it("经历正文中的内部术语会改写成可直接理解的说法", () => {
+    const input = succeeded();
+    input.memory_document.sections.next =
+      "下次做文档收口时，我会先确认当前实现和目标规划，再把验证闭环写成普通人能够逐项执行的检查顺序。";
+    const rendered = renderSemanticOutcome({
+      topic: topic(),
+      pairs: [pair("new")],
+      outcome: input,
+      now: "2026-08-14"
+    });
+
+    expect(rendered.digest.next_use).toContain("整理完成");
+    expect(rendered.digest.next_use).toContain("完整处理");
+    expect(rendered.memory_update.content).not.toMatch(/收口|闭环/);
+  });
+
   it("增量更新复用路径和稳定 ID，并保留全部历史来源与用户补充", () => {
     const oldEvidence = [
       "---",

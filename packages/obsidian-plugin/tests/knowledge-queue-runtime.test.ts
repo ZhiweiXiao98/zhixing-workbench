@@ -62,6 +62,54 @@ describe("knowledge queue", () => {
     expect(compiled.selectedPairs.map((item: { id: string }) => item.id)).toEqual(["old"]);
   });
 
+  it("历史积压按项目和日期合并，跨日仍保持独立经历", () => {
+    const first = pair("catchup-a", "完善日历视图", "已完成日历筛选并验证");
+    first.session_id = "catchup-session-a";
+    const second = pair("catchup-b", "修复同步按钮", "同步按钮已恢复并通过验证");
+    second.session_id = "catchup-session-b";
+    second.captured_at = "2026-07-24T10:00:00+08:00";
+    const nextDay = pair("catchup-c", "整理知识队列", "整理队列已完成");
+    nextDay.session_id = "catchup-session-c";
+    nextDay.date = "2026-07-25";
+    nextDay.captured_at = "2026-07-25T08:00:00+08:00";
+
+    const detailed = compileKnowledgeQueue([first, second, nextDay], [], sessionIndex, {
+      maxTopics: 10,
+      maxPairs: 20,
+      now: "2026-07-26T00:00:00+08:00"
+    });
+    const compact = compileKnowledgeQueue([first, second, nextDay], [], sessionIndex, {
+      maxTopics: 10,
+      maxPairs: 20,
+      now: "2026-07-26T00:00:00+08:00",
+      compactBacklog: true
+    });
+
+    expect(compact.queue.compact_backlog).toBe(true);
+    expect(compact.queue.candidate_topics).toBe(2);
+    expect(compact.queue.candidate_topics).toBeLessThan(detailed.queue.candidate_topics);
+    expect(compact.selectedTopics.find((topic: { title: string }) =>
+      topic.title.includes("2026-07-24"))).toMatchObject({
+      pair_count: 2,
+      title_source: "catchup-project-day"
+    });
+  });
+
+  it("已有会话标题的内部辅助 Agent 指令仍只作为主任务证据", () => {
+    const supporting = pair(
+      "indexed-support",
+      "系统指令：你是验证 Agent。当前平台上下文仅供检查。",
+      "验证完成。"
+    );
+    supporting.session_id = "indexed-support-session";
+    const compiled = compileKnowledgeQueue([supporting], [], indexed([
+      [supporting.session_id, "验证任务"]
+    ]), { maxTopics: 10, maxPairs: 20 });
+
+    expect(compiled.queue.supporting_pairs).toBe(1);
+    expect(compiled.queue.candidate_topics).toBe(0);
+  });
+
   it("同一反馈跨日合并，不同反馈保持分开", () => {
     const first = pair("feedback-1a", "<heartbeat>处理反馈</heartbeat>", "已处理反馈 ID: fb-1");
     const second = pair("feedback-1b", "<heartbeat>处理反馈</heartbeat>", "已更新反馈 ID: fb-1");

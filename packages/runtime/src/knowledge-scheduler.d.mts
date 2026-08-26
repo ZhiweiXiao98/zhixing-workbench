@@ -8,6 +8,7 @@ export interface KnowledgeScheduleState {
   failure_count: number;
   trigger: string | null;
   owner_pid: number | null;
+  catchup_pending: boolean;
 }
 
 export function readScheduleState(options: { vault: string; now?: Date | string | number; recoverInterrupted?: boolean;
@@ -30,7 +31,7 @@ export function evaluateSchedule(options: {
   newActivity?: boolean;
   executorReady?: boolean;
 }): { due: boolean; reason: string; next_due: string | null };
-export function markScheduleIdle(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; nextDue?: string | null }): Promise<KnowledgeScheduleState>;
+export function markScheduleIdle(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; nextDue?: string | null; clearCatchup?: boolean }): Promise<KnowledgeScheduleState>;
 export function beginScheduleAttempt(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; trigger?: string }): Promise<KnowledgeScheduleState>;
-export function finishScheduleAttempt(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; ok: boolean; error?: unknown }): Promise<KnowledgeScheduleState>;
+export function finishScheduleAttempt(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; ok: boolean; error?: unknown; catchupPending?: boolean }): Promise<KnowledgeScheduleState>;
 export function normalizeScheduleState(value: unknown, now?: Date | string | number): KnowledgeScheduleState;

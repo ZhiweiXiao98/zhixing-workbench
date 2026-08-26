@@ -4,6 +4,7 @@ import { atomicJson, localDate, readJson } from "./common.mjs";
 
 const STATE_SCHEMA = 1;
 const BASE_RETRY_MS = 5 * 60_000;
+const CATCHUP_DELAY_MS = 60_000;
 const MAX_RETRY_MS = 6 * 60 * 60_000;
 const LEGACY_RUNNING_STALE_MS = 90 * 60_000;
 const ORPHAN_RUNNING_GRACE_MS = 2 * 60_000;
@@ -40,13 +41,16 @@ export async function runDueKnowledgeCycle(options) {
     executorReady: options.executorReady });
   if (!decision.due) {
     if (decision.reason === "already-running") return { ran: false, ok: true, reason: decision.reason, state };
-    state = await markScheduleIdle({ vault, state, now, nextDue: decision.next_due });
+    state = await markScheduleIdle({ vault, state, now, nextDue: decision.next_due,
+      clearCatchup: decision.reason === "queue-empty" });
     return { ran: false, ok: true, reason: decision.reason, state };
   }
   state = await beginScheduleAttempt({ vault, state, now, trigger: decision.reason });
   try {
     await options.run(decision.reason);
-    state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || new Date(), ok: true });
+    const remainingQueue = await readJson(path.join(vault, "raw", "codex", "ingest-status.json"), null);
+    state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || new Date(), ok: true,
+      catchupPending: readyTopicCount(remainingQueue) > 0 });
     return { ran: true, ok: true, reason: decision.reason, state };
   } catch (error) {
     state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || new Date(), ok: false, error });
@@ -69,6 +73,12 @@ export function evaluateSchedule(options) {
   }
   if (!hasWork) return { due: false, reason: "queue-empty", next_due: nextDailyDue(now).toISOString() };
   if (state.status === "backoff") return { due: true, reason: "retry-after-backoff", next_due: null };
+  if (state.catchup_pending) {
+    if (state.next_due && Date.parse(state.next_due) > now.getTime()) {
+      return { due: false, reason: "catchup-wait", next_due: state.next_due };
+    }
+    return { due: true, reason: "backlog-catchup", next_due: null };
+  }
   if (!lastSuccess) return { due: true, reason: options.newActivity ? "first-activity-catchup" : "first-startup-catchup", next_due: null };
   const today = localDate(now);
   const lastDate = localDate(new Date(lastSuccess));
@@ -87,7 +97,8 @@ export async function markScheduleIdle(options) {
     (requestedDue && Date.parse(requestedDue) > now.getTime())
   );
   const nextDue = keepBackoff ? laterFutureDue(state.next_due, requestedDue, now) : requestedDue || nextDailyDue(now).toISOString();
-  const updated = { ...state, status: keepBackoff ? "backoff" : "idle", next_due: nextDue };
+  const updated = { ...state, status: keepBackoff ? "backoff" : "idle", next_due: nextDue,
+    catchup_pending: options.clearCatchup ? false : state.catchup_pending };
   const target = schedulePath(options.vault);
   if (JSON.stringify(updated) !== JSON.stringify(state) || !await exists(target)) await atomicJson(target, updated);
   return updated;
@@ -113,15 +124,20 @@ export async function finishScheduleAttempt(options) {
   const now = toDate(options.now);
   const state = normalizeState(options.state, now);
   if (options.ok) {
+    const catchupPending = Boolean(options.catchupPending);
     const updated = {
       ...state,
       last_attempt: state.last_attempt || now.toISOString(),
       last_success: now.toISOString(),
-      next_due: nextDailyDue(now).toISOString(),
+      next_due: catchupPending
+        ? new Date(now.getTime() + CATCHUP_DELAY_MS).toISOString()
+        : nextDailyDue(now).toISOString(),
       status: "succeeded",
       error: null,
       failure_count: 0,
-      owner_pid: null
+      owner_pid: null,
+      trigger: catchupPending ? "backlog-catchup" : state.trigger,
+      catchup_pending: catchupPending
     };
     await atomicJson(schedulePath(options.vault), updated);
     return updated;
@@ -179,8 +195,13 @@ function normalizeState(value, now = new Date()) {
     error: typeof value?.error === "string" && value.error ? value.error.slice(0, 500) : null,
     failure_count: Math.max(0, Number(value?.failure_count || 0)),
     trigger: typeof value?.trigger === "string" ? value.trigger.slice(0, 80) : null,
-    owner_pid: Number.isInteger(value?.owner_pid) && value.owner_pid > 0 ? value.owner_pid : null
+    owner_pid: Number.isInteger(value?.owner_pid) && value.owner_pid > 0 ? value.owner_pid : null,
+    catchup_pending: Boolean(value?.catchup_pending)
   };
+}
+
+function readyTopicCount(queue) {
+  return Math.max(0, Number(queue?.ready_topics ?? queue?.candidate_topics ?? 0));
 }
 
 function schedulePath(vault) {

@@ -6,7 +6,34 @@ import path from "node:path";
 import test from "node:test";
 import { configRoot, redactText } from "../packages/runtime/src/common.mjs";
 import { createReceiver } from "../packages/runtime/src/receiver-server.mjs";
-import { runCycle } from "../packages/runtime/src/run-cycle.mjs";
+import { cycleProfile, runCycle } from "../packages/runtime/src/run-cycle.mjs";
+
+test("积压队列自动扩大单轮吞吐且显式参数仍优先", () => {
+  assert.deepEqual(cycleProfile({ ready_topics: 618 }), {
+    mode: "catchup",
+    batches: 12,
+    maxTopics: 6,
+    maxPairs: 72,
+    maxChars: 180_000,
+    softTokenBudget: 2_000_000
+  });
+  assert.deepEqual(cycleProfile({ ready_topics: 12 }), {
+    mode: "normal",
+    batches: 3,
+    maxTopics: 2,
+    maxPairs: 16,
+    maxChars: 60_000,
+    softTokenBudget: 150_000
+  });
+  assert.deepEqual(cycleProfile({ ready_topics: 618 }, { batches: 4, maxTopics: 3 }), {
+    mode: "catchup",
+    batches: 4,
+    maxTopics: 3,
+    maxPairs: 72,
+    maxChars: 180_000,
+    softTokenBudget: 2_000_000
+  });
+});
 
 test("三端配置目录遵循各平台约定", () => {
   assert.equal(configRoot({ platform: "win32", home: "X:/home", env: { APPDATA: "X:/profile" } }), path.win32.resolve("X:/profile", "ZhixingWorkbench"));
@@ -120,6 +147,9 @@ test("语义整理以只读 Codex 运行并由外层提交回执", async () => {
 import path from "node:path";
 const args = process.argv.slice(2);
 await writeFile(path.join(process.cwd(), "fake-codex-args.json"), JSON.stringify(args));
+await writeFile(path.join(process.cwd(), "fake-codex-home.txt"), process.env.CODEX_HOME || "");
+let prompt = ""; for await (const chunk of process.stdin) prompt += chunk.toString("utf8");
+await writeFile(path.join(process.cwd(), "fake-codex-prompt.txt"), prompt);
 const output = args[args.indexOf("--output-last-message") + 1];
 const contract = JSON.parse(await readFile(path.join(process.cwd(), "raw", "codex", "ingest-run-contract.json"), "utf8"));
 await writeFile(output, JSON.stringify({ schema_version: 4, run_id: contract.run_id, outcomes: contract.topics.map((topic) => ({ id: topic.id, status: "not-applicable", reason: "虚构演示没有长期复用价值" })) }));
@@ -131,13 +161,20 @@ process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { total_tok
       batches: 1,
       codex: process.execPath,
       codexPrefixArgs: [fakeCodex],
+      codexHome: path.join(root, "isolated-codex"),
       maxTopics: 1,
       maxPairs: 2
     });
     assert.equal(result.status, "succeeded");
     assert.equal(result.tokens_used, 42);
     const codexArgs = JSON.parse(await readFile(path.join(root, "fake-codex-args.json"), "utf8"));
+    assert.deepEqual(codexArgs.slice(codexArgs.indexOf("--config"), codexArgs.indexOf("--config") + 2),
+      ["--config", "model_reasoning_effort=\"medium\""]);
     assert.deepEqual(codexArgs.slice(codexArgs.indexOf("--sandbox"), codexArgs.indexOf("--sandbox") + 2), ["--sandbox", "read-only"]);
+    assert.ok(codexArgs.includes("--ignore-user-config"));
+    assert.match(codexArgs[codexArgs.indexOf("--output-schema") + 1], /ingest-result\.schema\.json$/);
+    assert.equal(await readFile(path.join(root, "fake-codex-home.txt"), "utf8"), path.join(root, "isolated-codex"));
+    assert.match(await readFile(path.join(root, "fake-codex-prompt.txt"), "utf8"), /本批冻结合同/);
     const state = JSON.parse(await readFile(path.join(root, "raw", "codex", "ingest-state.json"), "utf8"));
     assert.deepEqual(new Set(state.processed_event_ids), new Set(["prompt-event", "stop-event"]));
   } finally {
@@ -187,6 +224,32 @@ process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { total_tok
     assert.match(log, /原始事件来源与主题证据不一致/);
     const persisted = JSON.parse(await readFile(path.join(root, "raw", "codex", "automation", "last-cycle.json"), "utf8"));
     assert.match(persisted.batches[0].error, /原始事件来源与主题证据不一致/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("执行器明确限流时立即停止本轮，不重复消耗剩余批次", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-quota-cycle-"));
+  const fakeTransaction = path.join(root, "fake-transaction.mjs");
+  const fakeCodex = path.join(root, "fake-codex.mjs");
+  await writeFile(fakeTransaction, `import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+const args = process.argv.slice(2); const command = args[0]; const value = (name) => args[args.indexOf(name) + 1];
+const vault = value("--vault"); const runId = value("--run-id");
+if (command === "prepare") { const staging = path.join(vault, "raw", "codex", "staging"); await mkdir(staging, { recursive: true });
+  const contract = { run_id: runId, pair_count: 1, topic_count: 1, system_pair_count: 0,
+    result_path: path.join(staging, runId + ".json"), topics: [{ id: "topic:quota" }] };
+  process.stdout.write(JSON.stringify(contract) + "\\n");
+} else { process.stdout.write(JSON.stringify({ ok: true }) + "\\n"); }
+`, "utf8");
+  await writeFile(fakeCodex, `process.stderr.write("You've hit your usage limit. Try again at 4:13 PM.\\n"); process.exitCode = 1;\n`, "utf8");
+  try {
+    const result = await runCycle({ vault: root, batches: 3, transaction: fakeTransaction,
+      codex: process.execPath, codexPrefixArgs: [fakeCodex], skipFeishu: true });
+    assert.equal(result.status, "failed");
+    assert.equal(result.batches.length, 1);
+    assert.match(result.error, /usage limit/i);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -51,4 +51,20 @@ describe("知行台事实型健康状态", () => {
     health.schedule.next_due = "2026-08-13T10:05:00.000Z";
     expect(scheduleHealthLabel(health, (value) => value)).toContain("整理失败");
   });
+
+  it("积压未清空时显示连续追赶而不是次日守候", () => {
+    const health = {
+      running: false,
+      schedulerHost: { configured: true, supported: true, phase: "idle", owner_kind: null },
+      schedule: {
+        status: "succeeded",
+        next_due: "2026-08-13T10:01:00.000Z",
+        catchup_pending: true
+      },
+      organizer: { runtime: { supported: true }, executor: { supported: true } }
+    } as SuiteHealth;
+    expect(scheduleHealthLabel(health, (value) => value)).toBe(
+      "正在追赶积压 · 下轮 2026-08-13T10:01:00.000Z"
+    );
+  });
 });

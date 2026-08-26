@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "outcomes"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 4 },
+    "run_id": { "type": "string" },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "reason", "evidence_document", "memory_document"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["succeeded", "pending", "not-applicable"]
+          },
+          "reason": { "type": "string" },
+          "evidence_document": {
+            "anyOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["title", "projects", "last_verified", "trust", "sections"],
+                "properties": {
+                  "title": { "type": "string" },
+                  "projects": { "type": "array", "items": { "type": "string" } },
+                  "last_verified": { "type": "string" },
+                  "trust": {
+                    "type": "string",
+                    "enum": ["verified", "observed", "inferred"]
+                  },
+                  "sections": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "problem",
+                      "root_cause",
+                      "attempts",
+                      "solution",
+                      "boundaries",
+                      "verification",
+                      "signals"
+                    ],
+                    "properties": {
+                      "problem": { "type": "string" },
+                      "root_cause": { "type": "string" },
+                      "attempts": { "type": "string" },
+                      "solution": { "type": "string" },
+                      "boundaries": { "type": "string" },
+                      "verification": { "type": "string" },
+                      "signals": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "memory_document": {
+            "anyOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["title", "projects", "last_reviewed", "occurred_time", "sections"],
+                "properties": {
+                  "title": { "type": "string" },
+                  "projects": { "type": "array", "items": { "type": "string" } },
+                  "last_reviewed": { "type": "string" },
+                  "occurred_time": { "type": "string" },
+                  "sections": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["goal", "obstacle", "judgment", "action", "result", "next"],
+                    "properties": {
+                      "goal": { "type": "string" },
+                      "obstacle": { "type": "string" },
+                      "judgment": { "type": "string" },
+                      "action": { "type": "string" },
+                      "result": { "type": "string" },
+                      "next": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
