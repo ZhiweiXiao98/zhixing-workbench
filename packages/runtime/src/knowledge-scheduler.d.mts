@@ -27,11 +27,11 @@ export function evaluateSchedule(options: {
   state?: Partial<KnowledgeScheduleState>;
   lastCycle?: { status?: string; finished_at?: string; error?: string;
     batches?: Array<{ status?: string }> } | null;
-  queue?: { ready_topics?: number; candidate_topics?: number } | null;
+  queue?: { ready_topics?: number; candidate_topics?: number; next_ready_at?: string | null } | null;
   newActivity?: boolean;
   executorReady?: boolean;
 }): { due: boolean; reason: string; next_due: string | null };
-export function markScheduleIdle(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; nextDue?: string | null; clearCatchup?: boolean }): Promise<KnowledgeScheduleState>;
+export function markScheduleIdle(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; nextDue?: string | null; trigger?: string; clearCatchup?: boolean }): Promise<KnowledgeScheduleState>;
 export function beginScheduleAttempt(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; trigger?: string }): Promise<KnowledgeScheduleState>;
-export function finishScheduleAttempt(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; ok: boolean; error?: unknown; catchupPending?: boolean }): Promise<KnowledgeScheduleState>;
+export function finishScheduleAttempt(options: { vault: string; state?: Partial<KnowledgeScheduleState>; now?: Date | string | number; ok: boolean; error?: unknown; catchupPending?: boolean; nextReadyAt?: string | null }): Promise<KnowledgeScheduleState>;
 export function normalizeScheduleState(value: unknown, now?: Date | string | number): KnowledgeScheduleState;

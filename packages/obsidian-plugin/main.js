@@ -5866,6 +5866,9 @@ function scheduleHealthLabel(health, formatTime) {
   if (health.schedule.catchup_pending) {
     return health.schedule.next_due ? `\u6B63\u5728\u8FFD\u8D76\u79EF\u538B \xB7 \u4E0B\u8F6E ${formatTime(health.schedule.next_due)}` : "\u6B63\u5728\u8FFD\u8D76\u79EF\u538B";
   }
+  if (health.schedule.trigger === "quiet-window" && health.schedule.next_due) {
+    return `\u7B49\u5F85\u8BB0\u5F55\u7A33\u5B9A \xB7 ${formatTime(health.schedule.next_due)} \u81EA\u52A8\u6574\u7406`;
+  }
   return health.schedule.next_due ? `\u540E\u53F0\u5B88\u5019 23:30 \xB7 \u4E0B\u6B21\u68C0\u67E5 ${formatTime(health.schedule.next_due)}` : "\u540E\u53F0\u5B88\u5019\u6BCF\u5929 23:30";
 }
 function formatHealthTime(value) {
@@ -8758,7 +8761,8 @@ async function runDueKnowledgeCycle(options) {
       state,
       now,
       nextDue: decision.next_due,
-      clearCatchup: decision.reason === "queue-empty"
+      trigger: decision.reason === "waiting-quiet-window" ? "quiet-window" : void 0,
+      clearCatchup: decision.reason === "queue-empty" || decision.reason === "waiting-quiet-window"
     });
     return { ran: false, ok: true, reason: decision.reason, state };
   }
@@ -8766,12 +8770,14 @@ async function runDueKnowledgeCycle(options) {
   try {
     await options.run(decision.reason);
     const remainingQueue = await readJson(import_node_path9.default.join(vault, "raw", "codex", "ingest-status.json"), null);
+    const finishedAt = toDate2(options.finishedAt || /* @__PURE__ */ new Date());
     state = await finishScheduleAttempt({
       vault,
       state,
-      now: options.finishedAt || /* @__PURE__ */ new Date(),
+      now: finishedAt,
       ok: true,
-      catchupPending: readyTopicCount(remainingQueue) > 0
+      catchupPending: readyTopicCount(remainingQueue) > 0,
+      nextReadyAt: nextReadyTime(remainingQueue)
     });
     return { ran: true, ok: true, reason: decision.reason, state };
   } catch (error) {
@@ -8784,7 +8790,8 @@ function evaluateSchedule(options) {
   const state = normalizeState2(options.state, now);
   const lastSuccess = validIso2(state.last_success) || successfulCycleTime(options.lastCycle);
   const readyTopics = Math.max(0, Number(options.queue?.ready_topics ?? options.queue?.candidate_topics ?? 0));
-  const hasWork = readyTopics > 0 || Boolean(options.newActivity);
+  const candidateTopics = Math.max(readyTopics, Number(options.queue?.candidate_topics || 0));
+  const hasWork = candidateTopics > 0 || Boolean(options.newActivity);
   if (state.status === "running") return { due: false, reason: "already-running", next_due: state.next_due };
   if (!options.executorReady) return state.status === "backoff" ? { due: false, reason: "executor-unavailable", next_due: backoffProbeDue(state.next_due, now) } : { due: false, reason: "executor-unavailable", next_due: futureDue(state.next_due, now) };
   if (state.next_due && state.status === "backoff" && Date.parse(state.next_due) > now.getTime()) {
@@ -8792,17 +8799,32 @@ function evaluateSchedule(options) {
   }
   if (!hasWork) return { due: false, reason: "queue-empty", next_due: nextDailyDue(now).toISOString() };
   if (state.status === "backoff") return { due: true, reason: "retry-after-backoff", next_due: null };
-  if (state.catchup_pending) {
+  if (!lastSuccess) return { due: true, reason: options.newActivity ? "first-activity-catchup" : "first-startup-catchup", next_due: null };
+  if (options.newActivity) return { due: true, reason: "new-activity-index", next_due: null };
+  if (state.catchup_pending && readyTopics > 0) {
     if (state.next_due && Date.parse(state.next_due) > now.getTime()) {
       return { due: false, reason: "catchup-wait", next_due: state.next_due };
     }
     return { due: true, reason: "backlog-catchup", next_due: null };
   }
-  if (!lastSuccess) return { due: true, reason: options.newActivity ? "first-activity-catchup" : "first-startup-catchup", next_due: null };
   const today = localDate(now);
   const lastDate = localDate(new Date(lastSuccess));
   if (lastDate < today) return { due: true, reason: "missed-day-catchup", next_due: null };
   const dailyDue = dailyDueFor(now);
+  if (readyTopics > 0) {
+    return now.getTime() >= dailyDue.getTime() ? { due: true, reason: "daily-2330", next_due: null } : { due: true, reason: "quiet-window-ready", next_due: null };
+  }
+  if (candidateTopics > 0 && readyTopics === 0) {
+    const nextReady = nextReadyTime(options.queue);
+    if (nextReady && Date.parse(nextReady) <= now.getTime()) {
+      return { due: true, reason: "quiet-window-ready", next_due: null };
+    }
+    if (now.getTime() >= dailyDue.getTime()) {
+      return { due: true, reason: "daily-2330", next_due: null };
+    }
+    const nextDue = earliestDue(nextReady, dailyDue.toISOString());
+    return { due: false, reason: "waiting-quiet-window", next_due: nextDue };
+  }
   if (now.getTime() >= dailyDue.getTime()) return { due: true, reason: "daily-2330", next_due: null };
   return { due: false, reason: "waiting-daily-time", next_due: dailyDue.toISOString() };
 }
@@ -8818,6 +8840,7 @@ async function markScheduleIdle(options) {
     ...state,
     status: keepBackoff ? "backoff" : "idle",
     next_due: nextDue,
+    trigger: options.trigger ? String(options.trigger).slice(0, 80) : state.trigger,
     catchup_pending: options.clearCatchup ? false : state.catchup_pending
   };
   const target = schedulePath(options.vault);
@@ -8844,16 +8867,18 @@ async function finishScheduleAttempt(options) {
   const state = normalizeState2(options.state, now);
   if (options.ok) {
     const catchupPending = Boolean(options.catchupPending);
+    const nextReadyAt = validIso2(options.nextReadyAt);
+    const quietWindowPending = !catchupPending && nextReadyAt && Date.parse(nextReadyAt) > now.getTime();
     const updated2 = {
       ...state,
       last_attempt: state.last_attempt || now.toISOString(),
       last_success: now.toISOString(),
-      next_due: catchupPending ? new Date(now.getTime() + CATCHUP_DELAY_MS).toISOString() : nextDailyDue(now).toISOString(),
+      next_due: catchupPending ? new Date(now.getTime() + CATCHUP_DELAY_MS).toISOString() : quietWindowPending ? nextReadyAt : nextDailyDue(now).toISOString(),
       status: "succeeded",
       error: null,
       failure_count: 0,
       owner_pid: null,
-      trigger: catchupPending ? "backlog-catchup" : state.trigger,
+      trigger: catchupPending ? "backlog-catchup" : quietWindowPending ? "quiet-window" : state.trigger,
       catchup_pending: catchupPending
     };
     await atomicJson(schedulePath(options.vault), updated2);
@@ -8910,6 +8935,12 @@ function normalizeState2(value, now = /* @__PURE__ */ new Date()) {
 }
 function readyTopicCount(queue) {
   return Math.max(0, Number(queue?.ready_topics ?? queue?.candidate_topics ?? 0));
+}
+function nextReadyTime(queue) {
+  return validIso2(queue?.next_ready_at);
+}
+function earliestDue(...values) {
+  return values.map(validIso2).filter(Boolean).sort((left, right) => Date.parse(left) - Date.parse(right))[0] || null;
 }
 function schedulePath(vault) {
   return import_node_path9.default.join(import_node_path9.default.resolve(vault), "raw", "codex", "automation", "schedule-state.json");

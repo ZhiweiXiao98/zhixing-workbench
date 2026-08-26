@@ -42,15 +42,18 @@ export async function runDueKnowledgeCycle(options) {
   if (!decision.due) {
     if (decision.reason === "already-running") return { ran: false, ok: true, reason: decision.reason, state };
     state = await markScheduleIdle({ vault, state, now, nextDue: decision.next_due,
-      clearCatchup: decision.reason === "queue-empty" });
+      trigger: decision.reason === "waiting-quiet-window" ? "quiet-window" : undefined,
+      clearCatchup: decision.reason === "queue-empty" || decision.reason === "waiting-quiet-window" });
     return { ran: false, ok: true, reason: decision.reason, state };
   }
   state = await beginScheduleAttempt({ vault, state, now, trigger: decision.reason });
   try {
     await options.run(decision.reason);
     const remainingQueue = await readJson(path.join(vault, "raw", "codex", "ingest-status.json"), null);
-    state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || new Date(), ok: true,
-      catchupPending: readyTopicCount(remainingQueue) > 0 });
+    const finishedAt = toDate(options.finishedAt || new Date());
+    state = await finishScheduleAttempt({ vault, state, now: finishedAt, ok: true,
+      catchupPending: readyTopicCount(remainingQueue) > 0,
+      nextReadyAt: nextReadyTime(remainingQueue) });
     return { ran: true, ok: true, reason: decision.reason, state };
   } catch (error) {
     state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || new Date(), ok: false, error });
@@ -63,7 +66,8 @@ export function evaluateSchedule(options) {
   const state = normalizeState(options.state, now);
   const lastSuccess = validIso(state.last_success) || successfulCycleTime(options.lastCycle);
   const readyTopics = Math.max(0, Number(options.queue?.ready_topics ?? options.queue?.candidate_topics ?? 0));
-  const hasWork = readyTopics > 0 || Boolean(options.newActivity);
+  const candidateTopics = Math.max(readyTopics, Number(options.queue?.candidate_topics || 0));
+  const hasWork = candidateTopics > 0 || Boolean(options.newActivity);
   if (state.status === "running") return { due: false, reason: "already-running", next_due: state.next_due };
   if (!options.executorReady) return state.status === "backoff"
     ? { due: false, reason: "executor-unavailable", next_due: backoffProbeDue(state.next_due, now) }
@@ -73,17 +77,34 @@ export function evaluateSchedule(options) {
   }
   if (!hasWork) return { due: false, reason: "queue-empty", next_due: nextDailyDue(now).toISOString() };
   if (state.status === "backoff") return { due: true, reason: "retry-after-backoff", next_due: null };
-  if (state.catchup_pending) {
+  if (!lastSuccess) return { due: true, reason: options.newActivity ? "first-activity-catchup" : "first-startup-catchup", next_due: null };
+  if (options.newActivity) return { due: true, reason: "new-activity-index", next_due: null };
+  if (state.catchup_pending && readyTopics > 0) {
     if (state.next_due && Date.parse(state.next_due) > now.getTime()) {
       return { due: false, reason: "catchup-wait", next_due: state.next_due };
     }
     return { due: true, reason: "backlog-catchup", next_due: null };
   }
-  if (!lastSuccess) return { due: true, reason: options.newActivity ? "first-activity-catchup" : "first-startup-catchup", next_due: null };
   const today = localDate(now);
   const lastDate = localDate(new Date(lastSuccess));
   if (lastDate < today) return { due: true, reason: "missed-day-catchup", next_due: null };
   const dailyDue = dailyDueFor(now);
+  if (readyTopics > 0) {
+    return now.getTime() >= dailyDue.getTime()
+      ? { due: true, reason: "daily-2330", next_due: null }
+      : { due: true, reason: "quiet-window-ready", next_due: null };
+  }
+  if (candidateTopics > 0 && readyTopics === 0) {
+    const nextReady = nextReadyTime(options.queue);
+    if (nextReady && Date.parse(nextReady) <= now.getTime()) {
+      return { due: true, reason: "quiet-window-ready", next_due: null };
+    }
+    if (now.getTime() >= dailyDue.getTime()) {
+      return { due: true, reason: "daily-2330", next_due: null };
+    }
+    const nextDue = earliestDue(nextReady, dailyDue.toISOString());
+    return { due: false, reason: "waiting-quiet-window", next_due: nextDue };
+  }
   if (now.getTime() >= dailyDue.getTime()) return { due: true, reason: "daily-2330", next_due: null };
   return { due: false, reason: "waiting-daily-time", next_due: dailyDue.toISOString() };
 }
@@ -98,6 +119,7 @@ export async function markScheduleIdle(options) {
   );
   const nextDue = keepBackoff ? laterFutureDue(state.next_due, requestedDue, now) : requestedDue || nextDailyDue(now).toISOString();
   const updated = { ...state, status: keepBackoff ? "backoff" : "idle", next_due: nextDue,
+    trigger: options.trigger ? String(options.trigger).slice(0, 80) : state.trigger,
     catchup_pending: options.clearCatchup ? false : state.catchup_pending };
   const target = schedulePath(options.vault);
   if (JSON.stringify(updated) !== JSON.stringify(state) || !await exists(target)) await atomicJson(target, updated);
@@ -125,18 +147,22 @@ export async function finishScheduleAttempt(options) {
   const state = normalizeState(options.state, now);
   if (options.ok) {
     const catchupPending = Boolean(options.catchupPending);
+    const nextReadyAt = validIso(options.nextReadyAt);
+    const quietWindowPending = !catchupPending && nextReadyAt && Date.parse(nextReadyAt) > now.getTime();
     const updated = {
       ...state,
       last_attempt: state.last_attempt || now.toISOString(),
       last_success: now.toISOString(),
       next_due: catchupPending
         ? new Date(now.getTime() + CATCHUP_DELAY_MS).toISOString()
+        : quietWindowPending
+          ? nextReadyAt
         : nextDailyDue(now).toISOString(),
       status: "succeeded",
       error: null,
       failure_count: 0,
       owner_pid: null,
-      trigger: catchupPending ? "backlog-catchup" : state.trigger,
+      trigger: catchupPending ? "backlog-catchup" : quietWindowPending ? "quiet-window" : state.trigger,
       catchup_pending: catchupPending
     };
     await atomicJson(schedulePath(options.vault), updated);
@@ -202,6 +228,15 @@ function normalizeState(value, now = new Date()) {
 
 function readyTopicCount(queue) {
   return Math.max(0, Number(queue?.ready_topics ?? queue?.candidate_topics ?? 0));
+}
+
+function nextReadyTime(queue) {
+  return validIso(queue?.next_ready_at);
+}
+
+function earliestDue(...values) {
+  return values.map(validIso).filter(Boolean)
+    .sort((left, right) => Date.parse(left) - Date.parse(right))[0] || null;
 }
 
 function schedulePath(vault) {

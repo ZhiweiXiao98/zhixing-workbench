@@ -55,7 +55,8 @@ export async function runBackgroundTick(options = {}) {
       runKnowledge: async (reason) => {
         if (options.runKnowledge) return options.runKnowledge({ vault, codex, reason });
         const cycleRunner = options.cycleRunner || runCycle;
-        const summary = await cycleRunner({ vault, codex: codex.path, trigger: "automatic" });
+        const summary = await cycleRunner({ vault, codex: codex.path, trigger: "automatic",
+          skipFeishu: reason === "new-activity-index" });
         if (["failed", "partial"].includes(summary.status)) throw new Error(cycleFailureMessage(summary));
       }
     });

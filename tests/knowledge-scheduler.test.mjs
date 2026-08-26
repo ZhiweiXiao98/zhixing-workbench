@@ -162,6 +162,91 @@ test("成功后仍有积压时一分钟后继续追赶，清空后恢复每日�
   }
 });
 
+test("新记录静默期结束后立即整理，不等待夜间批处理", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-scheduler-quiet-window-"));
+  const queuePath = path.join(root, "raw", "codex", "ingest-status.json");
+  try {
+    await mkdir(path.dirname(queuePath), { recursive: true });
+    await writeFile(queuePath, JSON.stringify({
+      candidate_topics: 1,
+      ready_topics: 1
+    }), "utf8");
+    const first = await runDueKnowledgeCycle({
+      vault: root,
+      now: "2026-08-13T09:00:00.000Z",
+      finishedAt: "2026-08-13T09:01:00.000Z",
+      executorReady: true,
+      run: async () => {
+        await writeFile(queuePath, JSON.stringify({
+          candidate_topics: 2,
+          ready_topics: 0,
+          next_ready_at: "2026-08-13T10:30:00.000Z"
+        }), "utf8");
+      }
+    });
+    assert.equal(first.state.catchup_pending, false);
+    assert.equal(first.state.trigger, "quiet-window");
+    assert.equal(first.state.next_due, "2026-08-13T10:30:00.000Z");
+
+    const waiting = evaluateSchedule({
+      now: "2026-08-13T10:00:00.000Z",
+      state: first.state,
+      queue: { candidate_topics: 2, ready_topics: 0, next_ready_at: "2026-08-13T10:30:00.000Z" },
+      executorReady: true
+    });
+    assert.equal(waiting.due, false);
+    assert.equal(waiting.reason, "waiting-quiet-window");
+    assert.equal(waiting.next_due, "2026-08-13T10:30:00.000Z");
+
+    const due = evaluateSchedule({
+      now: "2026-08-13T10:30:00.000Z",
+      state: first.state,
+      queue: { candidate_topics: 2, ready_topics: 1, next_ready_at: null },
+      executorReady: true
+    });
+    assert.equal(due.due, true);
+    assert.equal(due.reason, "quiet-window-ready");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("当天新增记录立即刷新队列并预约静默期结束时间", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-scheduler-new-activity-"));
+  const queuePath = path.join(root, "raw", "codex", "ingest-status.json");
+  const schedulePath = path.join(root, "raw", "codex", "automation", "schedule-state.json");
+  try {
+    await mkdir(path.dirname(queuePath), { recursive: true });
+    await mkdir(path.dirname(schedulePath), { recursive: true });
+    await writeFile(queuePath, JSON.stringify({ candidate_topics: 0, ready_topics: 0 }), "utf8");
+    await writeFile(schedulePath, JSON.stringify({
+      status: "succeeded",
+      last_success: "2026-08-13T08:00:00.000Z",
+      next_due: "2026-08-13T23:30:00.000Z"
+    }), "utf8");
+    const result = await runDueKnowledgeCycle({
+      vault: root,
+      now: "2026-08-13T09:00:00.000Z",
+      finishedAt: "2026-08-13T09:00:05.000Z",
+      newActivity: true,
+      executorReady: true,
+      run: async (reason) => {
+        assert.equal(reason, "new-activity-index");
+        await writeFile(queuePath, JSON.stringify({
+          candidate_topics: 1,
+          ready_topics: 0,
+          next_ready_at: "2026-08-13T11:00:00.000Z"
+        }), "utf8");
+      }
+    });
+    assert.equal(result.ran, true);
+    assert.equal(result.state.trigger, "quiet-window");
+    assert.equal(result.state.next_due, "2026-08-13T11:00:00.000Z");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("运行中的周期优先于执行器探活失败且不会被降为 idle", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "zhixing-scheduler-running-probe-"));
   const automation = path.join(root, "raw", "codex", "automation");
@@ -396,6 +481,6 @@ test("只有明确成功或全部批次成功的旧 last-cycle 才能作为成�
     queue: { ready_topics: 1 },
     executorReady: true
   });
-  assert.equal(legacy.due, false);
-  assert.equal(legacy.reason, "waiting-daily-time");
+  assert.equal(legacy.due, true);
+  assert.equal(legacy.reason, "quiet-window-ready");
 });
