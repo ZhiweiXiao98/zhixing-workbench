@@ -80,7 +80,8 @@ export function compileKnowledgeQueue(pairs, settlements, sessionIndex, options 
     now,
     quietHours,
     recentHours,
-    retryBackoffHours
+    retryBackoffHours,
+    compactBacklog: Boolean(options.compactBacklog)
   })
     .filter((topic) => topic.pairIds.some((id) => pendingPairIds.has(id)));
   const eligibleTopics = topics.filter((topic) => topic.eligible);
@@ -134,13 +135,16 @@ export function compileKnowledgeQueue(pairs, settlements, sessionIndex, options 
       max_chars: maxChars,
       quiet_hours: quietHours,
       recent_hours: recentHours,
-      retry_backoff_hours: retryBackoffHours
+      retry_backoff_hours: retryBackoffHours,
+      compact_backlog: Boolean(options.compactBacklog)
     }
   };
 }
 
 function buildTopics(pairs, settlements, sessionIndex, options) {
-  const pairAnchors = segmentAnchors(pairs, sessionIndex);
+  const pairAnchors = options.compactBacklog
+    ? compactBacklogAnchors(pairs, sessionIndex)
+    : segmentAnchors(pairs, sessionIndex);
   const grouped = new Map();
   for (const pair of pairs) {
     const segment = pairAnchors.get(pair.id);
@@ -486,10 +490,39 @@ function classifyAutomationPair(pair) {
 
 function isSupportingPair(pair, sessionIndex) {
   return pair.source === "codex" &&
-    sessionIndex.available &&
-    !sessionIndex.titles.has(pair.session_id) &&
     /^\s*系统指令：/i.test(String(pair.prompt_content || "")) &&
-    /你是.{0,40}(?:Agent|智能体)|唯一工作重点|通过平台 Action/i.test(String(pair.prompt_content || ""));
+    /你是.{0,40}(?:Agent|智能体)|唯一工作重点|通过平台 Action|当前平台上下文|平台工具使用要求/i
+      .test(String(pair.prompt_content || ""));
+}
+
+function compactBacklogAnchors(pairs, sessionIndex) {
+  const assignments = new Map();
+  for (const pair of pairs) {
+    const automationId = substantiveAutomationId(pair);
+    if (automationId) {
+      assignments.set(pair.id, {
+        anchor: explicitAnchor(pair),
+        ...segmentTopicTitle(pair, sessionIndex)
+      });
+      continue;
+    }
+    if (pair.source === "chatgpt_web") {
+      const title = topicTitle(pair, sessionIndex).title;
+      assignments.set(pair.id, {
+        anchor: `catchup:chatgpt:${pair.conversation_id || pair.session_id}:${pair.date}`,
+        title: `${title} · ${pair.date}`,
+        titleSource: "catchup-conversation-day"
+      });
+      continue;
+    }
+    const project = projectLabel(pair);
+    assignments.set(pair.id, {
+      anchor: `catchup:${pair.source}:${normalizeText(project)}:${pair.date}`,
+      title: `${project} · ${pair.date} 工作经历`,
+      titleSource: "catchup-project-day"
+    });
+  }
+  return assignments;
 }
 
 function segmentAnchors(pairs, sessionIndex) {

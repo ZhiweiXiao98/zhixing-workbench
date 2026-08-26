@@ -44,6 +44,11 @@ export function scheduleHealthLabel(health: SuiteHealth, formatTime: (value: str
       ? "后台调度等待登录启动 · 打开 Obsidian 时仍会补跑"
       : "仅在 Obsidian 打开时检查补跑";
   }
+  if (health.schedule.catchup_pending) {
+    return health.schedule.next_due
+      ? `正在追赶积压 · 下轮 ${formatTime(health.schedule.next_due)}`
+      : "正在追赶积压";
+  }
   return health.schedule.next_due ? `后台守候 23:30 · 下次检查 ${formatTime(health.schedule.next_due)}` : "后台守候每天 23:30";
 }
 

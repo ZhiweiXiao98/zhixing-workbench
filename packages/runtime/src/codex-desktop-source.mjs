@@ -8,7 +8,7 @@ const SOURCE_TYPE = "codex_desktop_sessions_v1";
 const CAPTURE_SOURCE = "codex_desktop";
 const DEFAULT_STALE_MS = 36 * 60 * 60_000;
 const DEFAULT_BOOTSTRAP_LOOKBACK_MS = 24 * 60 * 60_000;
-const VERIFIED_PRODUCER_MINORS = new Set([144, 147]);
+const VERIFIED_PRODUCER_MINORS = new Set([144, 147, 148, 149]);
 
 export async function syncCodexDesktop(options) {
   const vault = path.resolve(options.vault);

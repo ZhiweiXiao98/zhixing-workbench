@@ -111,6 +111,57 @@ test("进程中断留下的陈旧 running 在重启后转为退避并继续补�
   }
 });
 
+test("成功后仍有积压时一分钟后继续追赶，清空后恢复每日守候", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-scheduler-catchup-"));
+  const queuePath = path.join(root, "raw", "codex", "ingest-status.json");
+  try {
+    await mkdir(path.dirname(queuePath), { recursive: true });
+    await writeFile(queuePath, JSON.stringify({ ready_topics: 80 }), "utf8");
+    const first = await runDueKnowledgeCycle({
+      vault: root,
+      now: "2026-08-13T09:00:00.000Z",
+      finishedAt: "2026-08-13T09:02:00.000Z",
+      executorReady: true,
+      run: async () => {
+        await writeFile(queuePath, JSON.stringify({ ready_topics: 35 }), "utf8");
+      }
+    });
+    assert.equal(first.ok, true);
+    assert.equal(first.state.catchup_pending, true);
+    assert.equal(first.state.next_due, "2026-08-13T09:03:00.000Z");
+
+    const waiting = evaluateSchedule({
+      now: "2026-08-13T09:02:30.000Z",
+      state: first.state,
+      queue: { ready_topics: 35 },
+      executorReady: true
+    });
+    assert.equal(waiting.due, false);
+    assert.equal(waiting.reason, "catchup-wait");
+
+    const due = evaluateSchedule({
+      now: "2026-08-13T09:03:00.000Z",
+      state: first.state,
+      queue: { ready_topics: 35 },
+      executorReady: true
+    });
+    assert.equal(due.due, true);
+    assert.equal(due.reason, "backlog-catchup");
+
+    await writeFile(queuePath, JSON.stringify({ ready_topics: 0 }), "utf8");
+    const empty = await runDueKnowledgeCycle({
+      vault: root,
+      now: "2026-08-13T09:03:00.000Z",
+      executorReady: true,
+      run: async () => assert.fail("空队列不应启动整理")
+    });
+    assert.equal(empty.reason, "queue-empty");
+    assert.equal(empty.state.catchup_pending, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("运行中的周期优先于执行器探活失败且不会被降为 idle", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "zhixing-scheduler-running-probe-"));
   const automation = path.join(root, "raw", "codex", "automation");

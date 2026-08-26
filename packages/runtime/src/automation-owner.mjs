@@ -1,3 +1,5 @@
+import path from "node:path";
+import { readJson } from "./common.mjs";
 import { syncCodexDesktop } from "./codex-desktop-source.mjs";
 import { beginScheduleAttempt, finishScheduleAttempt, readScheduleState, runDueKnowledgeCycle } from "./knowledge-scheduler.mjs";
 import { acquireVaultAutomationLock, withLeaseHeartbeat } from "./runtime-lock.mjs";
@@ -34,7 +36,10 @@ export async function runOwnedManualKnowledge(options) {
     state = await beginScheduleAttempt({ vault: options.vault, state, now: options.now, trigger: "manual" });
     try {
       await options.runKnowledge("manual");
-      state = await finishScheduleAttempt({ vault: options.vault, state, now: options.finishedAt || new Date(), ok: true });
+      const queue = await readJson(path.join(options.vault, "raw", "codex", "ingest-status.json"), null);
+      const readyTopics = Math.max(0, Number(queue?.ready_topics ?? queue?.candidate_topics ?? 0));
+      state = await finishScheduleAttempt({ vault: options.vault, state, now: options.finishedAt || new Date(), ok: true,
+        catchupPending: readyTopics > 0 });
       return { acquired: true, ran: true, ok: true, reason: "manual", state };
     } catch (error) {
       state = await finishScheduleAttempt({ vault: options.vault, state, now: options.finishedAt || new Date(), ok: false, error });

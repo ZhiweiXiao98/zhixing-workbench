@@ -375,6 +375,29 @@ describe("knowledge transaction", () => {
     )).toContain("<!-- zhixing-semantic:start:goal -->");
   });
 
+  it("中文经历标题可以包含 OpenAI 等英文产品名", async () => {
+    const vault = await createSinglePairVault("product-title", true);
+    await run(["prepare", "--vault", vault, "--run-id", "product-title-run", "--since", "2026-07-20"]);
+    const contract = JSON.parse(await readFile(
+      path.join(vault, "raw", "codex", "ingest-run-contract.json"),
+      "utf8"
+    ));
+    const resultPath = path.join(vault, ...contract.result_path.split("/"));
+    await mkdir(path.dirname(resultPath), { recursive: true });
+    const semantic = semanticResult("product-title-run", contract.topics[0].id);
+    semantic.outcomes[0]!.memory_document.title = "OpenAI Coding 套餐接入后的计费经验";
+    await writeFile(resultPath, JSON.stringify(semantic), "utf8");
+
+    const committed = JSON.parse((await run([
+      "commit", "--vault", vault, "--run-id", "product-title-run"
+    ])).stdout);
+    expect(committed.final_status).toBe("succeeded");
+    expect(await readFile(
+      path.join(vault, "wiki", "我的经历", "project", "OpenAI Coding 套餐接入后的计费经验.md"),
+      "utf8"
+    )).toContain("# OpenAI Coding 套餐接入后的计费经验");
+  });
+
   it("已成功主题的新证据待沉淀时保留旧 Wiki，并只让增量等待重试", async () => {
     const vault = await createSinglePairVault("reopened", true);
     await run(["prepare", "--vault", vault, "--run-id", "reopened-first", "--since", "2026-07-20"]);

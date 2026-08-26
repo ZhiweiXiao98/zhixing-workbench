@@ -658,8 +658,8 @@ var ArtifactWriter = class {
   async findManagedFiles(errors) {
     const entries = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
-      const path13 = (0, import_obsidian.normalizePath)(file.path);
-      const pathInfo = managedPathInfo(path13);
+      const path14 = (0, import_obsidian.normalizePath)(file.path);
+      const pathInfo = managedPathInfo(path14);
       if (!pathInfo) {
         continue;
       }
@@ -668,17 +668,17 @@ var ArtifactWriter = class {
         const metadata = readManagedArtifactMetadata(content);
         if (!metadata || metadata.date !== pathInfo.date || metadata.id.startsWith("daily:") !== pathInfo.daily) {
           if (/^zhixing_generated:\s*true\s*$/m.test(content)) {
-            errors.push(`${path13}: \u6258\u7BA1\u6587\u4EF6\u7684 frontmatter\u3001ID \u6216\u6807\u8BB0\u65E0\u6548\uFF0C\u5DF2\u8DF3\u8FC7`);
+            errors.push(`${path14}: \u6258\u7BA1\u6587\u4EF6\u7684 frontmatter\u3001ID \u6216\u6807\u8BB0\u65E0\u6548\uFF0C\u5DF2\u8DF3\u8FC7`);
           }
           continue;
         }
         if (pathInfo.daily && metadata.id !== `daily:${pathInfo.date}`) {
-          errors.push(`${path13}: \u65E5\u7D22\u5F15 ID \u4E0D\u5339\u914D\uFF0C\u5DF2\u8DF3\u8FC7`);
+          errors.push(`${path14}: \u65E5\u7D22\u5F15 ID \u4E0D\u5339\u914D\uFF0C\u5DF2\u8DF3\u8FC7`);
           continue;
         }
         entries.push({
           file,
-          path: path13,
+          path: path14,
           id: metadata.id,
           date: metadata.date,
           daily: pathInfo.daily,
@@ -686,7 +686,7 @@ var ArtifactWriter = class {
           title: metadata.title
         });
       } catch (error) {
-        errors.push(`${path13}: ${errorMessage(error)}`);
+        errors.push(`${path14}: ${errorMessage(error)}`);
       }
     }
     return entries;
@@ -951,12 +951,12 @@ function compareManagedCopies(left, right) {
   const rightPrimary = /\/成果-[0-9a-f]{12}\.md$/.test(right.path) ? 0 : 1;
   return leftPrimary - rightPrimary || left.path.localeCompare(right.path);
 }
-function managedPathInfo(path13) {
-  const daily = path13.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\.md$/);
+function managedPathInfo(path14) {
+  const daily = path14.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\.md$/);
   if (daily?.[1] && isValidLocalDate(daily[1])) {
     return { date: daily[1], daily: true };
   }
-  const readable = path13.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\/[^/]+\.md$/);
+  const readable = path14.match(/^成果\/知行台\/(\d{4}-\d{2}-\d{2})\/[^/]+\.md$/);
   if (readable?.[1] && isValidLocalDate(readable[1])) {
     return { date: readable[1], daily: false };
   }
@@ -4059,8 +4059,8 @@ function projectFromCwd(cwd) {
   }
   return identity(label, false);
 }
-function projectFromWikiPath(path13) {
-  const segments = path13.replace(/\\/g, "/").split("/");
+function projectFromWikiPath(path14) {
+  const segments = path14.replace(/\\/g, "/").split("/");
   const folder = segments.length >= 3 ? segments[1] : "\u901A\u7528";
   const label = folder === "\u8865\u5145" || folder?.startsWith("_") ? "\u77E5\u8BC6\u5E93" : folder ?? "\u77E5\u8BC6\u5E93";
   return identity(label, true);
@@ -4111,9 +4111,9 @@ function projectLabelPriority(sourceTypes) {
   }
   return 0;
 }
-function basename(path13) {
-  const parts = path13.split("\\").filter(Boolean);
-  return parts.at(-1) ?? path13;
+function basename(path14) {
+  const parts = path14.split("\\").filter(Boolean);
+  return parts.at(-1) ?? path14;
 }
 
 // src/core/task-identity.ts
@@ -4670,11 +4670,11 @@ function wikiEvent(document, title, project, date, occurredAt, kind, records, ti
     const source = record.source === "chatgpt_web" ? "chatgpt" : "codex";
     dailyPaths.add(`raw/${source}/daily/${toLocalDate(record.captured_at)}.md`);
   }
-  for (const path13 of dailyPaths) {
+  for (const path14 of dailyPaths) {
     sourceRefs.push({
-      type: path13.includes("/chatgpt/") ? "chatgpt" : "codex",
+      type: path14.includes("/chatgpt/") ? "chatgpt" : "codex",
       label: "\u539F\u59CB\u6765\u6E90\u9875",
-      path: path13
+      path: path14
     });
   }
   return {
@@ -5434,20 +5434,20 @@ function knowledgeChanges(value) {
       return [];
     }
     const action = stringValue3(item.action);
-    const path13 = stringValue3(item.path);
-    if (action !== "created" && action !== "updated" || !path13) {
+    const path14 = stringValue3(item.path);
+    if (action !== "created" && action !== "updated" || !path14) {
       return [];
     }
     return [{
       action,
-      path: path13,
-      title: stringValue3(item.title) || fileTitle2(path13),
+      path: path14,
+      title: stringValue3(item.title) || fileTitle2(path14),
       role: item.role === "memory" || item.role === "evidence" ? item.role : void 0
     }];
   });
 }
-function fileTitle2(path13) {
-  return path13.split(/[\\/]/).at(-1)?.replace(/\.md$/i, "") || "\u77E5\u8BC6\u7B14\u8BB0";
+function fileTitle2(path14) {
+  return path14.split(/[\\/]/).at(-1)?.replace(/\.md$/i, "") || "\u77E5\u8BC6\u7B14\u8BB0";
 }
 function stringArray2(value) {
   return Array.isArray(value) ? [...new Set(value.filter((item) => typeof item === "string" && Boolean(item.trim())))] : [];
@@ -5617,19 +5617,19 @@ var VaultSource = class {
     const rawPaths = new Set(rawFiles.map((file) => file.path));
     const wikiPaths = new Set(wikiFiles.map((file) => file.path));
     const ingestHistoryPaths = new Set(ingestHistoryFiles.map((file) => file.path));
-    for (const path13 of this.rawCache.keys()) {
-      if (!rawPaths.has(path13)) {
-        this.rawCache.delete(path13);
+    for (const path14 of this.rawCache.keys()) {
+      if (!rawPaths.has(path14)) {
+        this.rawCache.delete(path14);
       }
     }
-    for (const path13 of this.wikiCache.keys()) {
-      if (!wikiPaths.has(path13)) {
-        this.wikiCache.delete(path13);
+    for (const path14 of this.wikiCache.keys()) {
+      if (!wikiPaths.has(path14)) {
+        this.wikiCache.delete(path14);
       }
     }
-    for (const path13 of this.ingestHistoryCache.keys()) {
-      if (!ingestHistoryPaths.has(path13)) {
-        this.ingestHistoryCache.delete(path13);
+    for (const path14 of this.ingestHistoryCache.keys()) {
+      if (!ingestHistoryPaths.has(path14)) {
+        this.ingestHistoryCache.delete(path14);
       }
     }
   }
@@ -5791,8 +5791,8 @@ function selectEligibleCodexStops(records, eligibleTurnKeys) {
 function recordTurnKey(record) {
   return `${record.session_id}:${record.turn_id}`;
 }
-function isActivityPath(path13) {
-  return /^raw\/(codex|chatgpt|feishu)\/(events|daily)\//i.test(path13) || /^raw\/codex\/(ingest-history\/|automation\/.*\.log$|ingest-status\.json$|knowledge-settlements\.json$)/i.test(path13) || path13.startsWith("wiki/");
+function isActivityPath(path14) {
+  return /^raw\/(codex|chatgpt|feishu)\/(events|daily)\//i.test(path14) || /^raw\/codex\/(ingest-history\/|automation\/.*\.log$|ingest-status\.json$|knowledge-settlements\.json$)/i.test(path14) || path14.startsWith("wiki/");
 }
 
 // src/graph-filter.ts
@@ -5862,6 +5862,9 @@ function scheduleHealthLabel(health, formatTime) {
   if (health.schedulerHost.phase === "error") return health.schedulerHost.error || "\u540E\u53F0\u8C03\u5EA6\u5931\u8D25";
   if (!health.schedulerHost.supported) {
     return health.schedulerHost.configured ? "\u540E\u53F0\u8C03\u5EA6\u7B49\u5F85\u767B\u5F55\u542F\u52A8 \xB7 \u6253\u5F00 Obsidian \u65F6\u4ECD\u4F1A\u8865\u8DD1" : "\u4EC5\u5728 Obsidian \u6253\u5F00\u65F6\u68C0\u67E5\u8865\u8DD1";
+  }
+  if (health.schedule.catchup_pending) {
+    return health.schedule.next_due ? `\u6B63\u5728\u8FFD\u8D76\u79EF\u538B \xB7 \u4E0B\u8F6E ${formatTime(health.schedule.next_due)}` : "\u6B63\u5728\u8FFD\u8D76\u79EF\u538B";
   }
   return health.schedule.next_due ? `\u540E\u53F0\u5B88\u5019 23:30 \xB7 \u4E0B\u6B21\u68C0\u67E5 ${formatTime(health.schedule.next_due)}` : "\u540E\u53F0\u5B88\u5019\u6BCF\u5929 23:30";
 }
@@ -8039,7 +8042,7 @@ var import_node_child_process4 = require("node:child_process");
 var import_promises9 = require("node:fs/promises");
 var import_node_http = __toESM(require("node:http"), 1);
 var import_node_os5 = require("node:os");
-var import_node_path12 = __toESM(require("node:path"), 1);
+var import_node_path13 = __toESM(require("node:path"), 1);
 var import_node_util4 = require("node:util");
 var import_obsidian5 = require("obsidian");
 var import_electron2 = require("electron");
@@ -8305,7 +8308,7 @@ var SOURCE_TYPE = "codex_desktop_sessions_v1";
 var CAPTURE_SOURCE = "codex_desktop";
 var DEFAULT_STALE_MS = 36 * 60 * 6e4;
 var DEFAULT_BOOTSTRAP_LOOKBACK_MS = 24 * 60 * 6e4;
-var VERIFIED_PRODUCER_MINORS = /* @__PURE__ */ new Set([144, 147]);
+var VERIFIED_PRODUCER_MINORS = /* @__PURE__ */ new Set([144, 147, 148, 149]);
 async function syncCodexDesktop(options) {
   const vault = import_node_path8.default.resolve(options.vault);
   const codexHome = import_node_path8.default.resolve(options.codexHome || process.env.CODEX_HOME || import_node_path8.default.join((0, import_node_os4.homedir)(), ".codex"));
@@ -8701,11 +8704,15 @@ function safeError2(error) {
   return String(error instanceof Error ? error.message : error).replace(/[\r\n]+/g, " ").slice(0, 300);
 }
 
+// ../runtime/src/automation-owner.mjs
+var import_node_path11 = __toESM(require("node:path"), 1);
+
 // ../runtime/src/knowledge-scheduler.mjs
 var import_node_path9 = __toESM(require("node:path"), 1);
 var import_promises7 = require("node:fs/promises");
 var STATE_SCHEMA2 = 1;
 var BASE_RETRY_MS = 5 * 6e4;
+var CATCHUP_DELAY_MS = 6e4;
 var MAX_RETRY_MS = 6 * 60 * 6e4;
 var LEGACY_RUNNING_STALE_MS = 90 * 6e4;
 var ORPHAN_RUNNING_GRACE_MS = 2 * 6e4;
@@ -8746,13 +8753,26 @@ async function runDueKnowledgeCycle(options) {
   });
   if (!decision.due) {
     if (decision.reason === "already-running") return { ran: false, ok: true, reason: decision.reason, state };
-    state = await markScheduleIdle({ vault, state, now, nextDue: decision.next_due });
+    state = await markScheduleIdle({
+      vault,
+      state,
+      now,
+      nextDue: decision.next_due,
+      clearCatchup: decision.reason === "queue-empty"
+    });
     return { ran: false, ok: true, reason: decision.reason, state };
   }
   state = await beginScheduleAttempt({ vault, state, now, trigger: decision.reason });
   try {
     await options.run(decision.reason);
-    state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || /* @__PURE__ */ new Date(), ok: true });
+    const remainingQueue = await readJson(import_node_path9.default.join(vault, "raw", "codex", "ingest-status.json"), null);
+    state = await finishScheduleAttempt({
+      vault,
+      state,
+      now: options.finishedAt || /* @__PURE__ */ new Date(),
+      ok: true,
+      catchupPending: readyTopicCount(remainingQueue) > 0
+    });
     return { ran: true, ok: true, reason: decision.reason, state };
   } catch (error) {
     state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || /* @__PURE__ */ new Date(), ok: false, error });
@@ -8772,6 +8792,12 @@ function evaluateSchedule(options) {
   }
   if (!hasWork) return { due: false, reason: "queue-empty", next_due: nextDailyDue(now).toISOString() };
   if (state.status === "backoff") return { due: true, reason: "retry-after-backoff", next_due: null };
+  if (state.catchup_pending) {
+    if (state.next_due && Date.parse(state.next_due) > now.getTime()) {
+      return { due: false, reason: "catchup-wait", next_due: state.next_due };
+    }
+    return { due: true, reason: "backlog-catchup", next_due: null };
+  }
   if (!lastSuccess) return { due: true, reason: options.newActivity ? "first-activity-catchup" : "first-startup-catchup", next_due: null };
   const today = localDate(now);
   const lastDate = localDate(new Date(lastSuccess));
@@ -8788,7 +8814,12 @@ async function markScheduleIdle(options) {
     state.next_due && Date.parse(state.next_due) > now.getTime() || requestedDue && Date.parse(requestedDue) > now.getTime()
   );
   const nextDue = keepBackoff ? laterFutureDue(state.next_due, requestedDue, now) : requestedDue || nextDailyDue(now).toISOString();
-  const updated = { ...state, status: keepBackoff ? "backoff" : "idle", next_due: nextDue };
+  const updated = {
+    ...state,
+    status: keepBackoff ? "backoff" : "idle",
+    next_due: nextDue,
+    catchup_pending: options.clearCatchup ? false : state.catchup_pending
+  };
   const target = schedulePath(options.vault);
   if (JSON.stringify(updated) !== JSON.stringify(state) || !await exists(target)) await atomicJson(target, updated);
   return updated;
@@ -8812,15 +8843,18 @@ async function finishScheduleAttempt(options) {
   const now = toDate2(options.now);
   const state = normalizeState2(options.state, now);
   if (options.ok) {
+    const catchupPending = Boolean(options.catchupPending);
     const updated2 = {
       ...state,
       last_attempt: state.last_attempt || now.toISOString(),
       last_success: now.toISOString(),
-      next_due: nextDailyDue(now).toISOString(),
+      next_due: catchupPending ? new Date(now.getTime() + CATCHUP_DELAY_MS).toISOString() : nextDailyDue(now).toISOString(),
       status: "succeeded",
       error: null,
       failure_count: 0,
-      owner_pid: null
+      owner_pid: null,
+      trigger: catchupPending ? "backlog-catchup" : state.trigger,
+      catchup_pending: catchupPending
     };
     await atomicJson(schedulePath(options.vault), updated2);
     return updated2;
@@ -8870,8 +8904,12 @@ function normalizeState2(value, now = /* @__PURE__ */ new Date()) {
     error: typeof value?.error === "string" && value.error ? value.error.slice(0, 500) : null,
     failure_count: Math.max(0, Number(value?.failure_count || 0)),
     trigger: typeof value?.trigger === "string" ? value.trigger.slice(0, 80) : null,
-    owner_pid: Number.isInteger(value?.owner_pid) && value.owner_pid > 0 ? value.owner_pid : null
+    owner_pid: Number.isInteger(value?.owner_pid) && value.owner_pid > 0 ? value.owner_pid : null,
+    catchup_pending: Boolean(value?.catchup_pending)
   };
+}
+function readyTopicCount(queue) {
+  return Math.max(0, Number(queue?.ready_topics ?? queue?.candidate_topics ?? 0));
 }
 function schedulePath(vault) {
   return import_node_path9.default.join(import_node_path9.default.resolve(vault), "raw", "codex", "automation", "schedule-state.json");
@@ -9210,7 +9248,15 @@ async function runOwnedManualKnowledge(options) {
     state = await beginScheduleAttempt({ vault: options.vault, state, now: options.now, trigger: "manual" });
     try {
       await options.runKnowledge("manual");
-      state = await finishScheduleAttempt({ vault: options.vault, state, now: options.finishedAt || /* @__PURE__ */ new Date(), ok: true });
+      const queue = await readJson(import_node_path11.default.join(options.vault, "raw", "codex", "ingest-status.json"), null);
+      const readyTopics = Math.max(0, Number(queue?.ready_topics ?? queue?.candidate_topics ?? 0));
+      state = await finishScheduleAttempt({
+        vault: options.vault,
+        state,
+        now: options.finishedAt || /* @__PURE__ */ new Date(),
+        ok: true,
+        catchupPending: readyTopics > 0
+      });
       return { acquired: true, ran: true, ok: true, reason: "manual", state };
     } catch (error) {
       state = await finishScheduleAttempt({ vault: options.vault, state, now: options.finishedAt || /* @__PURE__ */ new Date(), ok: false, error });
@@ -9242,13 +9288,13 @@ function ownerMessage(owner) {
 }
 
 // ../runtime/src/source-health.mjs
-var import_node_path11 = __toESM(require("node:path"), 1);
+var import_node_path12 = __toESM(require("node:path"), 1);
 var DEFAULT_STALE_MS2 = 36 * 60 * 6e4;
 async function readCodexCliHookHealth(options) {
   const now = toDate3(options.now);
   const configured = countHookEvents(options.hooks) === 2;
   const supported = configured && Boolean(options.codexExecutable);
-  const lastEventAt = options.vault ? await readLastCodexEventAt(import_node_path11.default.join(import_node_path11.default.resolve(options.vault), "raw", "codex", "events"), "codex_cli_hook") : null;
+  const lastEventAt = options.vault ? await readLastCodexEventAt(import_node_path12.default.join(import_node_path12.default.resolve(options.vault), "raw", "codex", "events"), "codex_cli_hook") : null;
   return {
     source_type: "codex_cli_hook_v1",
     configured,
@@ -9385,9 +9431,9 @@ var SuiteService = class {
     new import_obsidian5.Notice("\u672C\u673A\u63A5\u6536\u5BC6\u94A5\u5DF2\u590D\u5236\uFF0C\u8BF7\u7C98\u8D34\u5230\u6D4F\u89C8\u5668\u6269\u5C55");
   }
   async openBrowserExtensionFolder() {
-    const install = await readJson2(import_node_path12.default.join(configRoot(), "install.json"), null);
-    const target = typeof install?.browser_extension_root === "string" ? install.browser_extension_root : import_node_path12.default.join(configRoot(), "browser-extension");
-    const manifest = await readJson2(import_node_path12.default.join(target, "manifest.json"), null);
+    const install = await readJson2(import_node_path13.default.join(configRoot(), "install.json"), null);
+    const target = typeof install?.browser_extension_root === "string" ? install.browser_extension_root : import_node_path13.default.join(configRoot(), "browser-extension");
+    const manifest = await readJson2(import_node_path13.default.join(target, "manifest.json"), null);
     if (!manifest?.version) {
       new import_obsidian5.Notice("\u6D4F\u89C8\u5668\u6269\u5C55\u5C1A\u672A\u5B89\u88C5\uFF0C\u8BF7\u5148\u91CD\u65B0\u8FD0\u884C\u77E5\u884C\u53F0\u5B89\u88C5\u5668");
       return;
@@ -9420,7 +9466,7 @@ var SuiteService = class {
       return;
     }
     const vault = this.vaultBasePath();
-    const runner = import_node_path12.default.join(this.programRoot, "runtime", "run-cycle.mjs");
+    const runner = import_node_path13.default.join(this.programRoot, "runtime", "run-cycle.mjs");
     const result2 = await runOwnedManualKnowledge({
       vault,
       ownerKind: "manual",
@@ -9458,14 +9504,14 @@ var SuiteService = class {
     const vault = this.vaultBasePath();
     const codexHome = codexHomePath();
     const [lastCycle, schedule, hooks, desktop, executor, webLastEvent, installState, backgroundState, automationOwner] = await Promise.all([
-      readJson2(import_node_path12.default.join(vault, "raw", "codex", "automation", "last-cycle.json"), null),
+      readJson2(import_node_path13.default.join(vault, "raw", "codex", "automation", "last-cycle.json"), null),
       readScheduleState({ vault, recoverStale: false }),
-      readJson2(import_node_path12.default.join(codexHome, "hooks.json"), {}),
+      readJson2(import_node_path13.default.join(codexHome, "hooks.json"), {}),
       readCodexDesktopHealth({ vault, codexHome }),
       probeCodexExecutor(codex?.path),
-      readLastCodexEventAt(import_node_path12.default.join(vault, "raw", "chatgpt", "events")),
-      readJson2(import_node_path12.default.join(configRoot(), "install.json"), null),
-      readJson2(import_node_path12.default.join(vault, "raw", "codex", "automation", "background-state.json"), null),
+      readLastCodexEventAt(import_node_path13.default.join(vault, "raw", "chatgpt", "events")),
+      readJson2(import_node_path13.default.join(configRoot(), "install.json"), null),
+      readJson2(import_node_path13.default.join(vault, "raw", "codex", "automation", "background-state.json"), null),
       readVaultAutomationOwner({ vault })
     ]);
     const cliHook = await readCodexCliHookHealth({ vault, hooks, codexExecutable: codex?.path });
@@ -9717,7 +9763,7 @@ ${result2.stderr}`);
     }
     const config = await this.getFeishuConfig();
     if (!config.enabled) return;
-    const runner = import_node_path12.default.join(this.programRoot, "runtime", "feishu-cli.mjs");
+    const runner = import_node_path13.default.join(this.programRoot, "runtime", "feishu-cli.mjs");
     this.setHealth({ feishu: { ...this.health.feishu, syncing: true, message: "\u6B63\u5728\u540C\u6B65\u98DE\u4E66" } });
     let syncResult = null;
     try {
@@ -9852,7 +9898,7 @@ ${String(error?.stderr || "")}`);
   }
   async ensureDeviceConfig() {
     const root = configRoot();
-    const target = import_node_path12.default.join(root, "device.json");
+    const target = import_node_path13.default.join(root, "device.json");
     const existing = await readJson2(target, null);
     if (existing?.receiver_token && String(existing.receiver_token).length >= 24) return existing;
     const created = {
@@ -9866,10 +9912,10 @@ ${String(error?.stderr || "")}`);
     return created;
   }
   async findProgramRoot() {
-    const install = await readJson2(import_node_path12.default.join(configRoot(), "install.json"), null);
+    const install = await readJson2(import_node_path13.default.join(configRoot(), "install.json"), null);
     this.nodeExecutable = typeof install?.node_path === "string" && install.node_path.trim() ? install.node_path : void 0;
     if (typeof install?.program_root === "string") {
-      const runner = import_node_path12.default.join(install.program_root, "runtime", "run-cycle.mjs");
+      const runner = import_node_path13.default.join(install.program_root, "runtime", "run-cycle.mjs");
       try {
         await (0, import_promises9.readFile)(runner, "utf8");
         this.programRoot = install.program_root;
@@ -9904,7 +9950,7 @@ ${String(error?.stderr || "")}`);
         this.setHealth({ running: true });
         try {
           await execFileAsync4(this.nodeExecutable, [
-            import_node_path12.default.join(this.programRoot, "runtime", "run-cycle.mjs"),
+            import_node_path13.default.join(this.programRoot, "runtime", "run-cycle.mjs"),
             "--vault",
             vault,
             "--trigger",
@@ -9938,7 +9984,7 @@ ${String(error?.stderr || "")}`);
   async readFeishuHealth() {
     const config = await this.getFeishuConfig();
     const cli = Boolean(this.larkExecutable);
-    const state = await readJson2(import_node_path12.default.join(this.vaultBasePath(), "raw", "feishu", "sync-state.json"), {});
+    const state = await readJson2(import_node_path13.default.join(this.vaultBasePath(), "raw", "feishu", "sync-state.json"), {});
     const enabledModules = Object.entries(config.modules).filter(([, enabled]) => enabled).map(([key]) => key);
     const pending = config.enabled ? await countPendingFeishu(this.vaultBasePath()) : 0;
     if (!config.enabled) {
@@ -9988,10 +10034,10 @@ ${String(error?.stderr || "")}`);
   }
 };
 function configRoot() {
-  if (process.env.ZHIXING_CONFIG) return import_node_path12.default.resolve(process.env.ZHIXING_CONFIG);
-  if (process.platform === "win32") return import_node_path12.default.join(process.env.APPDATA || import_node_path12.default.join((0, import_node_os5.homedir)(), "AppData", "Roaming"), "ZhixingWorkbench");
-  if (process.platform === "darwin") return import_node_path12.default.join((0, import_node_os5.homedir)(), "Library", "Application Support", "ZhixingWorkbench");
-  return import_node_path12.default.join(process.env.XDG_CONFIG_HOME || import_node_path12.default.join((0, import_node_os5.homedir)(), ".config"), "zhixing-workbench");
+  if (process.env.ZHIXING_CONFIG) return import_node_path13.default.resolve(process.env.ZHIXING_CONFIG);
+  if (process.platform === "win32") return import_node_path13.default.join(process.env.APPDATA || import_node_path13.default.join((0, import_node_os5.homedir)(), "AppData", "Roaming"), "ZhixingWorkbench");
+  if (process.platform === "darwin") return import_node_path13.default.join((0, import_node_os5.homedir)(), "Library", "Application Support", "ZhixingWorkbench");
+  return import_node_path13.default.join(process.env.XDG_CONFIG_HOME || import_node_path13.default.join((0, import_node_os5.homedir)(), ".config"), "zhixing-workbench");
 }
 async function readJson2(target, fallback) {
   try {
@@ -10001,7 +10047,7 @@ async function readJson2(target, fallback) {
   }
 }
 async function atomicJson2(target, value) {
-  await (0, import_promises9.mkdir)(import_node_path12.default.dirname(target), { recursive: true });
+  await (0, import_promises9.mkdir)(import_node_path13.default.dirname(target), { recursive: true });
   const temporary = `${target}.${process.pid}.tmp`;
   await (0, import_promises9.writeFile)(temporary, `${JSON.stringify(value, null, 2)}
 `, "utf8");
@@ -10118,7 +10164,8 @@ function emptyScheduleState() {
     error: null,
     failure_count: 0,
     trigger: null,
-    owner_pid: null
+    owner_pid: null,
+    catchup_pending: false
   };
 }
 function staleSince(value, threshold = 36 * 60 * 6e4) {
@@ -10126,7 +10173,7 @@ function staleSince(value, threshold = 36 * 60 * 6e4) {
   return !Number.isFinite(parsed) || Date.now() - parsed > threshold;
 }
 function codexHomePath() {
-  return import_node_path12.default.resolve(process.env.CODEX_HOME || import_node_path12.default.join((0, import_node_os5.homedir)(), ".codex"));
+  return import_node_path13.default.resolve(process.env.CODEX_HOME || import_node_path13.default.join((0, import_node_os5.homedir)(), ".codex"));
 }
 function normalizeFeishuConfig(value) {
   const keys = Object.keys(FEISHU_SCOPE_MAP);
@@ -10164,9 +10211,9 @@ function baseReadScopes() {
 }
 async function countPendingFeishu(vault) {
   const processed = /* @__PURE__ */ new Set();
-  const ingest = await readJson2(import_node_path12.default.join(vault, "raw", "codex", "ingest-state.json"), {});
+  const ingest = await readJson2(import_node_path13.default.join(vault, "raw", "codex", "ingest-state.json"), {});
   for (const id of Array.isArray(ingest.processed_event_ids) ? ingest.processed_event_ids : []) processed.add(String(id));
-  const directory = import_node_path12.default.join(vault, "raw", "feishu", "events");
+  const directory = import_node_path13.default.join(vault, "raw", "feishu", "events");
   let names = [];
   try {
     names = (await (0, import_promises9.readdir)(directory)).filter((name) => name.endsWith(".jsonl")).sort().slice(-45);
@@ -10175,7 +10222,7 @@ async function countPendingFeishu(vault) {
   }
   let pending = 0;
   for (const name of names) {
-    const lines = (await (0, import_promises9.readFile)(import_node_path12.default.join(directory, name), "utf8")).split(/\r?\n/);
+    const lines = (await (0, import_promises9.readFile)(import_node_path13.default.join(directory, name), "utf8")).split(/\r?\n/);
     for (const line of lines) {
       try {
         const item = JSON.parse(line);

@@ -892,7 +892,7 @@ function emptyFactualHealth(sourceType: string): FactualHealth {
 
 function emptyScheduleState(): KnowledgeScheduleState {
   return { schema_version: 1, last_attempt: null, last_success: null, next_due: null,
-    status: "idle", error: null, failure_count: 0, trigger: null, owner_pid: null };
+    status: "idle", error: null, failure_count: 0, trigger: null, owner_pid: null, catchup_pending: false };
 }
 
 function staleSince(value: string | null, threshold = 36 * 60 * 60_000): boolean {
