@@ -67,4 +67,21 @@ describe("知行台事实型健康状态", () => {
       "正在追赶积压 · 下轮 2026-08-13T10:01:00.000Z"
     );
   });
+
+  it("新记录等待稳定时显示实际自动整理时间", () => {
+    const health = {
+      running: false,
+      schedulerHost: { configured: true, supported: true, phase: "idle", owner_kind: null },
+      schedule: {
+        status: "succeeded",
+        trigger: "quiet-window",
+        next_due: "2026-08-13T10:30:00.000Z",
+        catchup_pending: false
+      },
+      organizer: { runtime: { supported: true }, executor: { supported: true } }
+    } as SuiteHealth;
+    expect(scheduleHealthLabel(health, (value) => value)).toBe(
+      "等待记录稳定 · 2026-08-13T10:30:00.000Z 自动整理"
+    );
+  });
 });

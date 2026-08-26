@@ -126,6 +126,7 @@ export function compileKnowledgeQueue(pairs, settlements, sessionIndex, options 
       ready_topics: topics.filter((topic) => topic.eligible).length,
       retry_topics: topics.filter((topic) => topic.lane === "retry").length,
       cooling_retry_topics: topics.filter((topic) => topic.retryCooling).length,
+      next_ready_at: nextReadyAt(topics, now),
       backlog_topics: topics.filter((topic) => topic.lane === "backlog").length,
       recent_topics: topics.filter((topic) => topic.lane === "recent").length,
       selected_lanes: selection.selectedLanes,
@@ -139,6 +140,15 @@ export function compileKnowledgeQueue(pairs, settlements, sessionIndex, options 
       compact_backlog: Boolean(options.compactBacklog)
     }
   };
+}
+
+function nextReadyAt(topics, now) {
+  const candidates = topics.filter((topic) => !topic.eligible).map((topic) => {
+    const quiet = Date.parse(topic.quietUntil || "");
+    const retry = topic.retryCooling ? Date.parse(topic.retryAfter || "") : Number.NaN;
+    return Math.max(Number.isFinite(quiet) ? quiet : 0, Number.isFinite(retry) ? retry : 0);
+  }).filter((value) => value > now);
+  return candidates.length > 0 ? new Date(Math.min(...candidates)).toISOString() : null;
 }
 
 function buildTopics(pairs, settlements, sessionIndex, options) {

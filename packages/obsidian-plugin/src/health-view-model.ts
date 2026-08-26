@@ -49,6 +49,9 @@ export function scheduleHealthLabel(health: SuiteHealth, formatTime: (value: str
       ? `正在追赶积压 · 下轮 ${formatTime(health.schedule.next_due)}`
       : "正在追赶积压";
   }
+  if (health.schedule.trigger === "quiet-window" && health.schedule.next_due) {
+    return `等待记录稳定 · ${formatTime(health.schedule.next_due)} 自动整理`;
+  }
   return health.schedule.next_due ? `后台守候 23:30 · 下次检查 ${formatTime(health.schedule.next_due)}` : "后台守候每天 23:30";
 }
 

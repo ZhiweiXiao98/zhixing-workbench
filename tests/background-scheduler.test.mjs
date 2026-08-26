@@ -128,6 +128,38 @@ test("同版本重复启动只保留一个后台宿主", async () => {
   }
 });
 
+test("桌面新增记录只刷新知识队列，不重复同步飞书", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-background-new-activity-"));
+  const vault = path.join(root, "vault");
+  const automation = path.join(vault, "raw", "codex", "automation");
+  let cycleOptions;
+  try {
+    await mkdir(automation, { recursive: true });
+    await writeFile(path.join(vault, "raw", "codex", "ingest-status.json"),
+      JSON.stringify({ candidate_topics: 0, ready_topics: 0 }), "utf8");
+    await writeFile(path.join(automation, "schedule-state.json"), JSON.stringify({
+      status: "succeeded",
+      last_success: "2026-08-13T08:00:00.000Z",
+      next_due: "2026-08-13T23:30:00.000Z"
+    }), "utf8");
+    const result = await runBackgroundTick({
+      install: { vaultRoot: vault, programRoot: path.join(root, "program") },
+      now: "2026-08-13T09:00:00.000Z",
+      syncDesktop: async () => ({ completed_turns: 1, last_event_at: "2026-08-13T09:00:00.000Z" }),
+      discoverCodex: async () => ({ path: "C:\\Fixture\\codex.exe", version: "codex-cli 0.147.0" }),
+      probeExecutor: async () => ({ supported: true, error: null }),
+      cycleRunner: async (options) => {
+        cycleOptions = options;
+        return { status: "succeeded", batches: [] };
+      }
+    });
+    assert.equal(result.reason, "new-activity-index");
+    assert.equal(cycleOptions.skipFeishu, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("后台 partial 保留明细并在 backoff 到期后恢复 last_success", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "zhixing-background-retry-"));
   const vault = path.join(root, "vault");
