@@ -114,7 +114,7 @@ export async function inspectBackgroundSchedulerRegistration(state) {
 export function launchBackgroundScheduler(options) {
   const scheduler = path.join(path.resolve(options.programRoot), "runtime", "background-scheduler.mjs");
   const child = (options.spawn || spawn)(options.nodePath || process.execPath,
-    [scheduler, "--config", path.resolve(options.configRoot)], {
+    [scheduler, "--config", path.resolve(options.configRoot), "--handoff"], {
       detached: true,
       stdio: "ignore",
       windowsHide: true,

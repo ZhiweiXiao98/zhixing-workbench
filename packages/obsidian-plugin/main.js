@@ -8311,7 +8311,7 @@ var SOURCE_TYPE = "codex_desktop_sessions_v1";
 var CAPTURE_SOURCE = "codex_desktop";
 var DEFAULT_STALE_MS = 36 * 60 * 6e4;
 var DEFAULT_BOOTSTRAP_LOOKBACK_MS = 24 * 60 * 6e4;
-var VERIFIED_PRODUCER_MINORS = /* @__PURE__ */ new Set([144, 147, 148, 149]);
+var VERIFIED_PRODUCER_MINORS = /* @__PURE__ */ new Set([144, 147, 148, 149, 150, 151]);
 async function syncCodexDesktop(options) {
   const vault = import_node_path8.default.resolve(options.vault);
   const codexHome = import_node_path8.default.resolve(options.codexHome || process.env.CODEX_HOME || import_node_path8.default.join((0, import_node_os4.homedir)(), ".codex"));

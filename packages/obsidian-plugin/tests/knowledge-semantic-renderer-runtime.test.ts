@@ -136,7 +136,8 @@ describe("knowledge semantic renderer", () => {
     const evidence = rendered.wiki_updates[0];
     expect(evidence).toMatchObject({
       action: "updated",
-      path: "wiki/Obsidian/原来的证据页.md",
+      previous_path: "wiki/Obsidian/原来的证据页.md",
+      path: "wiki/Obsidian/网页采集接收器的恢复与验证.md",
       expected_sha256: hash(oldEvidence)
     });
     expect(evidence.content).toContain("zhixing_wiki_id: stable-evidence");
@@ -147,7 +148,8 @@ describe("knowledge semantic renderer", () => {
     expect(evidence.content).toContain("## 用户补充\n我发现休眠恢复后也可能复现");
     expect(rendered.memory_update).toMatchObject({
       action: "updated",
-      path: "wiki/我的经历/Obsidian/原来的经历.md",
+      previous_path: "wiki/我的经历/Obsidian/原来的经历.md",
+      path: "wiki/我的经历/Obsidian/网页对话为什么突然没有进入知识库.md",
       expected_sha256: hash(oldMemory)
     });
     expect(rendered.memory_update.content).toContain("zhixing_memory_id: stable-memory");
@@ -279,6 +281,34 @@ describe("knowledge semantic renderer", () => {
     expect(safeNames.wiki_updates[0].path).not.toContain("..");
   });
 
+  it("托管页面标题或项目名称变化时声明安全改名", () => {
+    const oldMemory = memoryFixture("stable-memory");
+    const oldEvidence = evidenceFixture("stable-evidence", ["old:prompt", "old:stop"]);
+    const input = succeeded();
+    input.memory_document.title = "我修好了新的网页接收器";
+    input.evidence_document.title = "网页接收器常驻后台的实现";
+    const rendered = renderSemanticOutcome({
+      topic: { ...topic(), project: "汉化 t3" },
+      pairs: [pair("new")],
+      existingDocuments: [
+        document("memory", "wiki/我的经历/g-p-fixture/旧经历.md", oldMemory, "stable-memory"),
+        document("evidence", "wiki/g-p-fixture/旧证据.md", oldEvidence, "stable-evidence")
+      ],
+      outcome: input
+    });
+
+    expect(rendered.memory_update).toMatchObject({
+      action: "updated",
+      previous_path: "wiki/我的经历/g-p-fixture/旧经历.md",
+      path: "wiki/我的经历/汉化 t3/我修好了新的网页接收器.md"
+    });
+    expect(rendered.wiki_updates[0]).toMatchObject({
+      action: "updated",
+      previous_path: "wiki/g-p-fixture/旧证据.md",
+      path: "wiki/汉化 t3/网页接收器常驻后台的实现.md"
+    });
+  });
+
   it.each([
     ["pending", "现有证据不足"],
     ["not-applicable", "这只是一次无内容心跳"]
@@ -396,6 +426,18 @@ function evidenceFixture(stableId: string, sourceIds: string[]): string {
     ...sourceIds.map((id) => `  - ${JSON.stringify(id)}`),
     "---",
     "# 旧证据"
+  ].join("\n");
+}
+
+function memoryFixture(stableId: string): string {
+  return [
+    "---",
+    `zhixing_memory_id: ${stableId}`,
+    "zhixing_document: memory",
+    "projects: [Obsidian]",
+    "last_reviewed: 2026-07-28",
+    "---",
+    "# 旧经历"
   ].join("\n");
 }
 

@@ -103,9 +103,10 @@ export function renderSemanticOutcome({
 
   const memoryTitle = naturalTitle(memorySemantic.title, topic.title, "这次工作留下的经验");
   const evidenceTitle = naturalTitle(evidenceSemantic.title, topic.title, "这次工作的判断与验证");
-  const memoryPath = managedMemory
+  const previousMemoryPath = managedMemory
     ? safeManagedPath(managedMemory.path, "memory")
-    : `wiki/我的经历/${projectDirectory}/${fileName(memoryTitle)}.md`;
+    : undefined;
+  const memoryPath = `wiki/我的经历/${projectDirectory}/${fileName(memoryTitle)}.md`;
   const evidenceDocuments = managedEvidence.length > 0
     ? managedEvidence
     : [{
@@ -114,8 +115,11 @@ export function renderSemanticOutcome({
       path: `wiki/${projectDirectory}/${fileName(evidenceTitle)}.md`,
       stable_id: stableId("evidence", topic.id)
     }];
-  const evidencePaths = evidenceDocuments.map((document) =>
-    safeManagedPath(document.path, "evidence"));
+  const previousEvidencePaths = evidenceDocuments.map((document) => document.content
+    ? safeManagedPath(document.path, "evidence")
+    : undefined);
+  const evidencePaths = evidenceDocuments.map((_, index) =>
+    `wiki/${projectDirectory}/${fileName(evidenceTitle)}${index ? ` ${index + 1}` : ""}.md`);
 
   const currentEventIds = uniqueStrings(pairs.flatMap((pair) =>
     pair?.source_event_ids || []));
@@ -168,6 +172,9 @@ export function renderSemanticOutcome({
     return {
       action: existing ? "updated" : "created",
       path: documentPath,
+      previous_path: previousEvidencePaths[index] && previousEvidencePaths[index] !== documentPath
+        ? previousEvidencePaths[index]
+        : undefined,
       title: evidenceTitle,
       expected_sha256: existing ? text(document.sha256) || sha256(existing) : "",
       content
@@ -199,6 +206,9 @@ export function renderSemanticOutcome({
     memory_update: {
       action: existingMemory ? "updated" : "created",
       path: memoryPath,
+      previous_path: previousMemoryPath && previousMemoryPath !== memoryPath
+        ? previousMemoryPath
+        : undefined,
       title: memoryTitle,
       expected_sha256: existingMemory
         ? text(managedMemory?.sha256) || sha256(existingMemory)

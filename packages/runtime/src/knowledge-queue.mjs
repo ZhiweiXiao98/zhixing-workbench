@@ -554,15 +554,16 @@ function segmentAnchors(pairs, sessionIndex) {
       const explicit = explicitAnchor(pair);
       const newGoal = newGoalTitle(pair.prompt_content);
       const delegatedGoal = current && isDelegationPrompt(pair.prompt_content);
+      const nextWorkDay = current && pair.source === "codex" && pair.date !== current.date;
       if (!current || (explicit && explicit !== current.anchor) ||
-          ((newGoal || delegatedGoal) && !isShortContinuation(pair.prompt_content))) {
+          nextWorkDay || ((newGoal || delegatedGoal) && !isShortContinuation(pair.prompt_content))) {
         segmentOrdinal += 1;
         const family = numberedFamilies.get(pair.session_id);
         const anchor = explicit ?? (segmentOrdinal === 1 && family
           ? family
           : segmentAnchor(pair, newGoal, segmentOrdinal));
         const title = segmentTopicTitle(pair, sessionIndex, newGoal);
-        current = { anchor, ...title };
+        current = { anchor, date: pair.date, ...title };
       }
       assignments.set(pair.id, current);
     }
@@ -813,6 +814,9 @@ function durableAutomationTopicId(pair) {
 }
 
 function projectLabel(pair) {
+  if (String(pair.project_name || "").trim()) {
+    return String(pair.project_name).trim();
+  }
   if (pair.source === "chatgpt_web") {
     return "ChatGPT";
   }
