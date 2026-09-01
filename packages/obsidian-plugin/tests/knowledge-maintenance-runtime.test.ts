@@ -87,6 +87,42 @@ describe("knowledge maintenance", () => {
     expect(second).toMatchObject({ project_count: 0, document_count: 0 });
   });
 
+  it("大型综合页的追溯元数据不会挤占后续证据的综合预算", async () => {
+    const vault = await createVault();
+    await writeNote(vault, "wiki/演示项目/第一篇.md", evidence("第一篇", "event:first"));
+    await writeNote(vault, "wiki/演示项目/第二篇.md", evidence("第二篇", "event:second"));
+    const first = await prepareMaintenance(vault, { runId: "maintenance-large-summary" });
+    const firstContract = JSON.parse(await readFile(first.contract_path, "utf8"));
+    await writeFile(first.result_path,
+      JSON.stringify(result("maintenance-large-summary", firstContract.projects[0], "keep-active")), "utf8");
+    await commitMaintenance(vault, { runId: "maintenance-large-summary" });
+
+    const summaryPath = path.join(vault, "wiki", "演示项目", "演示项目知识总览.md");
+    const oversizedEventId = `event:${"x".repeat(130_000)}`;
+    const existing = await readFile(summaryPath, "utf8");
+    await writeFile(summaryPath, existing
+      .replace("source_event_ids:\n", `source_event_ids:\n  - ${oversizedEventId}\n`)
+      .concat("\n## 我的长期备注\n这段人工补充必须在后续综合中原样保留。\n"), "utf8");
+    await writeNote(vault, "wiki/演示项目/第三篇.md", evidence("第三篇", "event:third"));
+
+    const second = await prepareMaintenance(vault, { runId: "maintenance-large-summary-2" });
+    expect(second).toMatchObject({ project_count: 1 });
+    const secondContract = JSON.parse(await readFile(second.contract_path, "utf8"));
+    expect(secondContract.projects[0].documents.some((item: { path: string }) =>
+      item.path === "wiki/演示项目/第三篇.md")).toBe(true);
+    expect(secondContract.projects[0].existing_summary).toContain("我的长期备注");
+    expect(secondContract.projects[0].existing_summary).not.toContain(oversizedEventId);
+    expect(secondContract.projects[0].existing_summary.length).toBeLessThan(20_000);
+
+    await writeFile(second.result_path,
+      JSON.stringify(result("maintenance-large-summary-2", secondContract.projects[0], "keep-active")), "utf8");
+    await commitMaintenance(vault, { runId: "maintenance-large-summary-2" });
+    const updated = await readFile(summaryPath, "utf8");
+    expect(updated).toContain(oversizedEventId);
+    expect(updated).toContain("我的长期备注");
+    expect(updated).toContain("event:third");
+  });
+
   it("不会接管用户手写的同名知识总览", async () => {
     const vault = await createVault();
     const manual = "# 演示项目知识总览\n\n这是我手写的项目入口，自动整理不能覆盖。\n";

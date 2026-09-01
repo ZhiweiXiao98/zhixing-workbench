@@ -84,8 +84,9 @@ export async function prepareMaintenance(vaultRoot, options = {}) {
     const changed = documents.filter((document) => projectState.reviewed_shas?.[document.path] !== document.sha256);
     if (changed.length === 0 && !previousSummaryPath) continue;
     if (!summaryContent && documents.length < 2) continue;
+    const summaryForPrompt = compactSummaryForPrompt(summaryContent);
     const selected = [];
-    let selectedChars = summaryContent.length;
+    let selectedChars = summaryForPrompt.length;
     const candidates = changed.length > 0
       ? [...changed, ...documents.filter((item) => !changed.includes(item))]
       : documents;
@@ -101,7 +102,7 @@ export async function prepareMaintenance(vaultRoot, options = {}) {
       summary_path: summaryPath,
       previous_summary_path: previousSummaryPath || null,
       summary_expected_sha256: summaryContent ? sha256(summaryContent) : "",
-      existing_summary: summaryContent || null,
+      existing_summary: summaryForPrompt || null,
       documents: selected
     });
   }
@@ -197,7 +198,7 @@ export async function commitMaintenance(vaultRoot, options = {}) {
       summaryWrites.push({
         path: project.summary_path,
         previous_path: project.previous_summary_path || undefined,
-        content: renderSummary(project, outcome.summary, archivedPaths, contract.generated_at)
+        content: renderSummary(project, outcome.summary, archivedPaths, contract.generated_at, currentSummary)
       });
     } else {
       keptActive += project.documents.length;
@@ -354,8 +355,8 @@ function validateOutcome(project, outcome) {
   }
 }
 
-function renderSummary(project, summary, archivedPaths, generatedAt) {
-  const existing = String(project.existing_summary || "");
+function renderSummary(project, summary, archivedPaths, generatedAt, existingSummary = project.existing_summary) {
+  const existing = String(existingSummary || "");
   const priorPaths = yamlStringList(existing, "source_paths").map((item) => archivedPaths.get(item) || item);
   const currentPaths = project.documents.map((document) => archivedPaths.get(document.path) || document.path);
   const sourcePaths = uniqueStrings([...priorPaths, ...currentPaths]);
@@ -399,6 +400,25 @@ function renderSummary(project, summary, archivedPaths, generatedAt) {
   lines.push("## 来源文档", ...sourcePaths.map((sourcePath) => `- ${wikiLink(sourcePath)}`));
   if (unknownSections.length > 0) lines.push("", ...unknownSections);
   return `${lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+}
+
+function compactSummaryForPrompt(content) {
+  const value = String(content || "");
+  if (!value) return "";
+  const metadata = frontmatterBlocks(value)
+    .filter((block) => !["source_paths", "source_event_ids"].includes(block.key))
+    .flatMap((block) => block.lines);
+  const title = value.match(/^#\s+.+$/m)?.[0] || "";
+  const preamble = markdownPreamble(value);
+  const sections = markdownSections(value)
+    .filter((section) => section.heading !== "来源文档")
+    .map((section) => section.content);
+  return [
+    ...(metadata.length > 0 ? ["---", ...metadata, "---", ""] : []),
+    title,
+    ...(preamble ? ["", preamble] : []),
+    ...sections.flatMap((section) => ["", section])
+  ].join("\n").trimEnd() + "\n";
 }
 
 function renderArchive(content, originalPath, summaryPath, reason, archivedAt) {
