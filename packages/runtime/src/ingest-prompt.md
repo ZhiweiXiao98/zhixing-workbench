@@ -23,6 +23,8 @@
 
 只有可复用的事实、判断、失败路径、操作方法和已验证结果才形成知识。
 
+`evidence_document` 与 `memory_document` 的成立条件不同。群聊中的自动报告、转发卡片、他人总结或公共资料可以形成 AI 证据页；只有证据明确表明本人亲自提出目标、作出判断、执行处理、参加协作或验收结果时，才生成第一人称经历文章。无法确认本人参与时，成功结果的 `memory_document` 必须为 `null`，不得把群体结论改写成“我判断”“我完成”。
+
 - 有足够证据讲清目标、阻碍、判断、行动、结果和下次复用：`succeeded`。
 - 主题有长期价值，但本批证据不足以讲清：`pending`，说明缺什么。
 - 只有送达凭据、例行空操作，或没有长期复用价值：`not-applicable`，说明原因。
@@ -35,7 +37,7 @@
 
 ## succeeded 输出
 
-每个成功主题生成用途不同的两份纯语义内容。
+每个成功主题必须生成 `evidence_document`；满足本人经历证据条件时再生成 `memory_document`。
 
 ### evidence_document
 
@@ -56,6 +58,8 @@
 ### memory_document
 
 写给本人多年后回忆。自然中文，不堆叠代码类名、命令、事件 ID 或测试清单：
+
+若来源没有明确的本人参与证据，设为 `null`。
 
 - `title`：本人一看就能想起事情的自然标题。
 - `projects`：真实项目名称数组。
@@ -115,6 +119,6 @@
 }
 ```
 
-`pending` 和 `not-applicable` 输出 `id`、`status`、`reason`，并把 `evidence_document`、`memory_document` 都设为 `null`。`succeeded` 的两份文档都必须是完整对象。
+`pending` 和 `not-applicable` 输出 `id`、`status`、`reason`，并把 `evidence_document`、`memory_document` 都设为 `null`。`succeeded` 的 `evidence_document` 必须是完整对象；`memory_document` 只能是完整对象或 `null`。
 
 回执必须是合法 UTF-8 JSON，不要写 Markdown 代码围栏或路径说明。

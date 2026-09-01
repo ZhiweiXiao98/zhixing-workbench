@@ -1,4 +1,6 @@
 export const ARTIFACT_GRAPH_FILTER = '-path:"成果/知行台"';
+export const ARCHIVE_GRAPH_FILTER = '-path:"归档/知行台"';
+const MANAGED_GRAPH_FILTERS = [ARTIFACT_GRAPH_FILTER, ARCHIVE_GRAPH_FILTER];
 
 export interface GraphConfigUpdate {
   ok: boolean;
@@ -28,12 +30,11 @@ export function updateGraphConfigText(content: string, mode: "enable" | "disable
 }
 
 function addFilter(search: string): string {
-  if (search.includes(ARTIFACT_GRAPH_FILTER)) {
-    return search;
-  }
-  return [search, ARTIFACT_GRAPH_FILTER].filter(Boolean).join(" ");
+  return MANAGED_GRAPH_FILTERS.reduce((current, filter) =>
+    current.includes(filter) ? current : [current, filter].filter(Boolean).join(" "), search);
 }
 
 function removeFilter(search: string): string {
-  return search.split(ARTIFACT_GRAPH_FILTER).join(" ").replace(/\s+/g, " ").trim();
+  return MANAGED_GRAPH_FILTERS.reduce((current, filter) => current.split(filter).join(" "), search)
+    .replace(/\s+/g, " ").trim();
 }

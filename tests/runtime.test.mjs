@@ -182,6 +182,47 @@ process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { total_tok
   }
 });
 
+test("知识周期会把同项目零散证据送入综合事务", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-maintenance-cycle-"));
+  const fakeCodex = path.join(root, "fake-maintenance-codex.mjs");
+  const project = path.join(root, "wiki", "演示项目");
+  await mkdir(project, { recursive: true });
+  await writeFile(path.join(project, "第一篇.md"), maintenanceEvidence("第一篇", "event:first"), "utf8");
+  await writeFile(path.join(project, "第二篇.md"), maintenanceEvidence("第二篇", "event:second"), "utf8");
+  await writeFile(fakeCodex, `import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+const args = process.argv.slice(2); const output = args[args.indexOf("--output-last-message") + 1];
+const contract = JSON.parse(await readFile(path.join(process.cwd(), "raw", "codex", "maintenance-contract.json"), "utf8"));
+const summary = { overview: "把项目中的零散证据整理为一份持续更新的总览。", themes: "所有结论都需要保留来源和适用条件。", decisions: "采用同项目单一综合页并持续增量更新。", pitfalls: "只按时间罗列会让相同经验继续分散。", playbook: "先归并主题，再写当前结论，最后保留来源。", conflicts: "当前没有尚未说明的文档冲突或口径变化。", boundaries: "只综合已进入托管 Wiki 的证据页面。", open_questions: "后续继续观察新增知识能否稳定进入原有总览。" };
+await writeFile(output, JSON.stringify({ schema_version: 1, run_id: contract.run_id, outcomes: contract.projects.map((project) => ({ project_id: project.project_id, status: "succeeded", reason: "零散证据可以形成稳定总览", summary, reviews: project.documents.map((document) => ({ path: document.path, disposition: "keep-active", reason: "本轮保留原始证据用于验证" })) })) }));
+process.stdout.write(JSON.stringify({ type: "turn.completed", usage: { total_tokens: 31 } }) + "\\n");
+`, "utf8");
+  try {
+    const cycle = await runCycle({
+      vault: root,
+      batches: 1,
+      codex: process.execPath,
+      codexPrefixArgs: [fakeCodex],
+      codexHome: path.join(root, "isolated-codex"),
+      skipFeishu: true
+    });
+    assert.equal(cycle.status, "succeeded");
+    assert.deepEqual(cycle.maintenance, {
+      status: "succeeded",
+      projects: 1,
+      documents: 2,
+      archived: 0,
+      kept_active: 2,
+      tokens_used: 31,
+      duration_ms: cycle.maintenance.duration_ms,
+      summary_paths: ["wiki/演示项目/演示项目知识总览.md"]
+    });
+    assert.match(await readFile(path.join(project, "演示项目知识总览.md"), "utf8"), /核心结论/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("事务以 exit 2 返回部分失败时保留 stdout 回执与可读错误", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "zhixing-partial-evidence-"));
   const fakeTransaction = path.join(root, "fake-transaction.mjs");
@@ -263,6 +304,24 @@ async function postEvents(endpoint, token, events) {
   });
   assert.equal(response.status, 200);
   return response.json();
+}
+
+function maintenanceEvidence(title, eventId) {
+  const sections = [
+    ["问题与现象", "problem"], ["根因与判断依据", "root_cause"], ["尝试过的路径", "attempts"],
+    ["可复用的解决路径", "solution"], ["适用条件与边界", "boundaries"],
+    ["验证方式与结果", "verification"], ["下次快速识别", "signals"]
+  ];
+  return [
+    "---", `zhixing_wiki_id: wiki-${eventId.replace(/\W/g, "-")}`, "zhixing_document: evidence",
+    "projects:", "  - 演示项目", "last_verified: 2026-08-01", "trust: observed",
+    "source_event_ids:", `  - ${eventId}`, "---", `# ${title}`, "", "## 一眼看懂", "可复用证据。", "",
+    ...sections.flatMap(([heading, key]) => [
+      `## ${heading}`, `<!-- zhixing-semantic:start:${key} -->`, `${title}的具体事实与验证。`,
+      `<!-- zhixing-semantic:end:${key} -->`, ""
+    ]),
+    "## 来源与关联", `- ${eventId}`, ""
+  ].join("\n");
 }
 
 function runWithInput(command, args, input, env) {

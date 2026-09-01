@@ -5797,6 +5797,8 @@ function isActivityPath(path14) {
 
 // src/graph-filter.ts
 var ARTIFACT_GRAPH_FILTER = '-path:"\u6210\u679C/\u77E5\u884C\u53F0"';
+var ARCHIVE_GRAPH_FILTER = '-path:"\u5F52\u6863/\u77E5\u884C\u53F0"';
+var MANAGED_GRAPH_FILTERS = [ARTIFACT_GRAPH_FILTER, ARCHIVE_GRAPH_FILTER];
 function updateGraphConfigText(content, mode) {
   let parsed;
   try {
@@ -5818,13 +5820,10 @@ function updateGraphConfigText(content, mode) {
 ` };
 }
 function addFilter(search) {
-  if (search.includes(ARTIFACT_GRAPH_FILTER)) {
-    return search;
-  }
-  return [search, ARTIFACT_GRAPH_FILTER].filter(Boolean).join(" ");
+  return MANAGED_GRAPH_FILTERS.reduce((current, filter) => current.includes(filter) ? current : [current, filter].filter(Boolean).join(" "), search);
 }
 function removeFilter(search) {
-  return search.split(ARTIFACT_GRAPH_FILTER).join(" ").replace(/\s+/g, " ").trim();
+  return MANAGED_GRAPH_FILTERS.reduce((current, filter) => current.split(filter).join(" "), search).replace(/\s+/g, " ").trim();
 }
 
 // src/view.ts

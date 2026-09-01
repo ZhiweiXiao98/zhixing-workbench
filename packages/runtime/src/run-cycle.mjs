@@ -45,6 +45,8 @@ export async function runCycle(options = {}) {
   const vault = path.resolve(configuredVault);
   const runtimeRoot = path.dirname(fileURLToPath(import.meta.url));
   const transaction = path.resolve(options.transaction || path.join(runtimeRoot, "knowledge-transaction.mjs"));
+  const maintenanceTransaction = path.resolve(options.maintenanceTransaction ||
+    path.join(runtimeRoot, "knowledge-maintenance.mjs"));
   const prompt = await readFile(path.join(runtimeRoot, "ingest-prompt.md"), "utf8");
   const outputSchema = path.join(runtimeRoot, "ingest-result.schema.json");
   const codexHome = await prepareCodexHome(installed.configRoot, options);
@@ -67,7 +69,8 @@ export async function runCycle(options = {}) {
     feishu: options.skipFeishu ? { status: "skipped" } : await syncFeishu({ vault }).catch((error) => ({
       status: "failed",
       error: safeError(error)
-    }))
+    })),
+    maintenance: { status: "waiting" }
   };
   try {
     const batchCount = profile.batches;
@@ -167,6 +170,17 @@ export async function runCycle(options = {}) {
         }
       }
     }
+    summary.maintenance = ["failed", "budget-paused"].includes(summary.status)
+      ? { status: "skipped", reason: "本轮主整理未正常完成" }
+      : await runMaintenance({
+        vault,
+        runtimeRoot,
+        transaction: maintenanceTransaction,
+        codex,
+        codexHome,
+        options
+      }).catch((error) => ({ status: "failed", error: safeError(error) }));
+    summary.tokens_used += Number(summary.maintenance.tokens_used || 0);
     if (summary.status === "running") {
       summary.status = summary.batches.some((batch) => ["failed", "partial"].includes(batch.status)) ? "partial" : "succeeded";
     }
@@ -180,6 +194,57 @@ export async function runCycle(options = {}) {
     await atomicJson(path.join(vault, "raw", "codex", "automation", "last-cycle.json"), summary).catch(() => undefined);
     await release();
   }
+}
+
+async function runMaintenance({ vault, runtimeRoot, transaction, codex, codexHome, options }) {
+  if (options.skipMaintenance) return { status: "skipped", projects: 0, archived: 0, tokens_used: 0 };
+  const runId = randomUUID();
+  const prepareArgs = [transaction, "prepare", "--vault", vault, "--run-id", runId];
+  if (options.maintenanceMaxProjects != null) {
+    prepareArgs.push("--max-projects", String(integer(options.maintenanceMaxProjects, 2, 1, 8)));
+  }
+  const prepared = await runCommand(process.execPath, prepareArgs, { cwd: vault, timeoutMs: 120_000 });
+  const receipt = JSON.parse(lastNonemptyLine(prepared.stdout));
+  if (Number(receipt.project_count || 0) === 0) {
+    return { status: "idle", projects: 0, archived: 0, tokens_used: 0 };
+  }
+  const instructions = await readFile(path.join(runtimeRoot, "maintenance-prompt.md"), "utf8");
+  const prompt = await knowledgePrompt(instructions, vault, receipt.contract_path, receipt);
+  const agentOutputPath = receipt.result_path;
+  const codexArgs = [
+    ...(Array.isArray(options.codexPrefixArgs) ? options.codexPrefixArgs : []),
+    "exec", "--ignore-user-config",
+    ...(options.model ? ["--model", String(options.model)] : []),
+    "--config", `model_reasoning_effort="${reasoningEffort(options.reasoningEffort)}"`,
+    "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--json",
+    "--output-schema", path.join(runtimeRoot, "maintenance-result.schema.json"),
+    "--output-last-message", agentOutputPath, "-C", vault, "-"
+  ];
+  const startedAt = Date.now();
+  const codexResult = await runCommand(codex, codexArgs, {
+    cwd: vault,
+    input: prompt,
+    timeoutMs: integer(options.hardTimeoutMs, DEFAULTS.hardTimeoutMs, 60_000, 6 * 60 * 60_000),
+    env: {
+      ...process.env,
+      ...(codexHome ? { CODEX_HOME: codexHome } : {}),
+      ZHIXING_CAPTURE_DISABLED: "1"
+    }
+  });
+  const committed = await runCommand(process.execPath,
+    [transaction, "commit", "--vault", vault, "--run-id", runId],
+    { cwd: vault, timeoutMs: 120_000 });
+  const result = JSON.parse(lastNonemptyLine(committed.stdout));
+  return {
+    status: result.status || "succeeded",
+    projects: Number(result.summarized || receipt.project_count || 0),
+    documents: Number(receipt.document_count || 0),
+    archived: Number(result.archived || 0),
+    kept_active: Number(result.kept_active || 0),
+    tokens_used: tokenUsage(codexResult.stdout),
+    duration_ms: Date.now() - startedAt,
+    summary_paths: result.summary_paths || []
+  };
 }
 
 async function acquireLock(lockPath, staleMs) {

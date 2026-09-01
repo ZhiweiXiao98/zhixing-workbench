@@ -78,9 +78,13 @@ export function renderSemanticOutcome({
   }
 
   const evidenceSemantic = requiredObject(outcome.evidence_document, "evidence_document");
-  const memorySemantic = requiredObject(outcome.memory_document, "memory_document");
+  const memorySemantic = outcome.memory_document == null
+    ? undefined
+    : requiredObject(outcome.memory_document, "memory_document");
   const evidenceSections = requiredObject(evidenceSemantic.sections, "evidence_document.sections");
-  const memorySections = requiredObject(memorySemantic.sections, "memory_document.sections");
+  const memorySections = memorySemantic
+    ? requiredObject(memorySemantic.sections, "memory_document.sections")
+    : undefined;
   const documents = Array.isArray(existingDocuments)
     ? existingDocuments
     : topic.existing_knowledge?.documents || [];
@@ -93,7 +97,7 @@ export function renderSemanticOutcome({
   const projects = uniqueStrings([
     ...frontmatterProjects(managedMemory?.content),
     ...managedEvidence.flatMap((document) => frontmatterProjects(document.content)),
-    ...arrayStrings(memorySemantic.projects),
+    ...arrayStrings(memorySemantic?.projects),
     ...arrayStrings(evidenceSemantic.projects),
     text(topic.project)
   ]).filter(Boolean);
@@ -101,12 +105,19 @@ export function renderSemanticOutcome({
     projects.push(projectDirectory.replaceAll("/", "、"));
   }
 
-  const memoryTitle = naturalTitle(memorySemantic.title, topic.title, "这次工作留下的经验");
+  if (!memorySemantic && managedMemory) {
+    throw new Error("同一主题已有经历文章，后续更新不能丢弃本人经历");
+  }
+  const memoryTitle = memorySemantic
+    ? naturalTitle(memorySemantic.title, topic.title, "这次工作留下的经验")
+    : undefined;
   const evidenceTitle = naturalTitle(evidenceSemantic.title, topic.title, "这次工作的判断与验证");
   const previousMemoryPath = managedMemory
     ? safeManagedPath(managedMemory.path, "memory")
     : undefined;
-  const memoryPath = `wiki/我的经历/${projectDirectory}/${fileName(memoryTitle)}.md`;
+  const memoryPath = memoryTitle
+    ? `wiki/我的经历/${projectDirectory}/${fileName(memoryTitle)}.md`
+    : undefined;
   const evidenceDocuments = managedEvidence.length > 0
     ? managedEvidence
     : [{
@@ -125,19 +136,24 @@ export function renderSemanticOutcome({
     pair?.source_event_ids || []));
   const currentDailyPaths = uniqueStrings(pairs.map((pair) => pair?.daily_path));
   const today = latestDate(pairs, topic) || isoDate(now);
-  const occurredTime = text(memorySemantic.occurred_time) || dateRange(pairs, topic, today);
-  const lastReviewed = validDate(memorySemantic.last_reviewed) || today;
+  const occurredTime = text(memorySemantic?.occurred_time) || dateRange(pairs, topic, today);
+  const lastReviewed = validDate(memorySemantic?.last_reviewed) || today;
   const lastVerified = validDate(evidenceSemantic.last_verified) ||
     latestDate(pairs, topic) || today;
   const trust = ["verified", "observed", "inferred"].includes(evidenceSemantic.trust)
     ? evidenceSemantic.trust
     : "observed";
 
-  const digest = {
+  const digest = memorySections ? {
     about: memorySectionText(memorySections, "goal", "当时我想做什么"),
     problem: memorySectionText(memorySections, "obstacle", "我遇到了什么"),
     result: memorySectionText(memorySections, "result", "这次留下了什么"),
     next_use: memorySectionText(memorySections, "next", "下次遇到时")
+  } : {
+    about: sectionText(evidenceSections, "problem", "问题与现象"),
+    problem: sectionText(evidenceSections, "root_cause", "根因与判断依据"),
+    result: sectionText(evidenceSections, "solution", "可复用的解决路径"),
+    next_use: sectionText(evidenceSections, "signals", "下次快速识别")
   };
 
   const wikiUpdates = evidenceDocuments.map((document, index) => {
@@ -182,28 +198,24 @@ export function renderSemanticOutcome({
   });
 
   const existingMemory = rawText(managedMemory?.content);
-  const memoryStableId = frontmatterValue(existingMemory, "zhixing_memory_id") ||
-    text(managedMemory?.stable_id) ||
-    stableId("memory", topic.id);
-  const memoryContent = renderMemory({
-    title: memoryTitle,
-    projects,
-    lastReviewed,
-    occurredTime,
-    sections: memorySections,
-    evidencePaths,
-    extraFrontmatter: unknownFrontmatter(existingMemory, MANAGED_MEMORY_FRONTMATTER),
-    extraSections: unknownSections(existingMemory, MANAGED_MEMORY_HEADINGS),
-    preservedSections: preservedManagedSections(existingMemory, MEMORY_SECTIONS),
-    preamble: preservedPreamble(existingMemory, "memory"),
-    stableId: memoryStableId
-  });
-
-  return {
-    ...base,
-    digest,
-    wiki_updates: wikiUpdates,
-    memory_update: {
+  const memoryUpdate = memorySemantic ? (() => {
+    const memoryStableId = frontmatterValue(existingMemory, "zhixing_memory_id") ||
+      text(managedMemory?.stable_id) ||
+      stableId("memory", topic.id);
+    const memoryContent = renderMemory({
+      title: memoryTitle,
+      projects,
+      lastReviewed,
+      occurredTime,
+      sections: memorySections,
+      evidencePaths,
+      extraFrontmatter: unknownFrontmatter(existingMemory, MANAGED_MEMORY_FRONTMATTER),
+      extraSections: unknownSections(existingMemory, MANAGED_MEMORY_HEADINGS),
+      preservedSections: preservedManagedSections(existingMemory, MEMORY_SECTIONS),
+      preamble: preservedPreamble(existingMemory, "memory"),
+      stableId: memoryStableId
+    });
+    return {
       action: existingMemory ? "updated" : "created",
       path: memoryPath,
       previous_path: previousMemoryPath && previousMemoryPath !== memoryPath
@@ -214,7 +226,15 @@ export function renderSemanticOutcome({
         ? text(managedMemory?.sha256) || sha256(existingMemory)
         : "",
       content: memoryContent
-    }
+    };
+  })() : undefined;
+
+  return {
+    ...base,
+    digest,
+    wiki_updates: wikiUpdates,
+    memory_omitted: !memorySemantic,
+    memory_update: memoryUpdate
   };
 }
 
@@ -267,7 +287,7 @@ function renderEvidence({
   }
   lines.push(
     "## 来源与关联",
-    `- 经历文章：${wikiLink(memoryPath)}`,
+    ...(memoryPath ? [`- 经历文章：${wikiLink(memoryPath)}`] : []),
     ...dailyPaths.map((dailyPath) =>
       `- [${path.posix.basename(dailyPath, ".md")} 来源页](${relativeLink(evidencePath, dailyPath)})`),
     "",
