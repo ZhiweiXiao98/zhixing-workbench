@@ -38,6 +38,22 @@ describe("knowledge semantic renderer", () => {
     expect(rendered.memory_update.content).toContain("[[Obsidian/网页采集接收器的恢复与验证]]");
   });
 
+  it("群体报告只有公共证据时不伪造成第一人称经历", () => {
+    const input: any = succeeded();
+    input.memory_document = null;
+    const rendered = renderSemanticOutcome({
+      topic: topic(),
+      pairs: [pair("new")],
+      outcome: input,
+      now: "2026-07-29"
+    });
+
+    expect(rendered.memory_omitted).toBe(true);
+    expect(rendered.memory_update).toBeUndefined();
+    expect(rendered.wiki_updates[0].content).not.toContain("经历文章：");
+    expect(rendered.digest.about).toContain("网页端看起来仍在运行");
+  });
+
   it("日期开头的完整经历段落不会被误判为编号列表", () => {
     const input = succeeded();
     input.memory_document.sections.action =

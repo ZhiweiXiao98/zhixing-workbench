@@ -22,7 +22,7 @@ const LEGACY_TASK_NAMES = [
   "Codex - Obsidian Daily Ingest"
 ];
 
-export const VERSION = "0.6.20";
+export const VERSION = "0.6.21";
 export const OWNED_SKILLS = ["obsidian-knowledge", "investigate-work-history", "zhixing-manager"];
 
 export async function installSuite(options = {}) {
@@ -356,7 +356,7 @@ async function copyPlugin(sourceRoot, target) {
 async function initializeVault(vault, sourceRoot) {
   const directories = [
     ".obsidian/plugins", ".zhixing", "raw/codex/events", "raw/codex/automation",
-    "raw/chatgpt/events", "raw/feishu/events", "raw/feishu/daily", "成果/知行台", "wiki/我的经历", "wiki/示例"
+    "raw/chatgpt/events", "raw/feishu/events", "raw/feishu/daily", "成果/知行台", "归档/知行台", "wiki/我的经历", "wiki/示例"
   ];
   for (const directory of directories) await mkdir(path.join(vault, directory), { recursive: true });
   await writeIfMissing(path.join(vault, ".zhixing", "README.md"),

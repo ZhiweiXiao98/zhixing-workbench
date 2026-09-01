@@ -32,6 +32,9 @@ for (const asset of manifest.assets) {
     "zhixing-workbench/packages/runtime/src/runtime-lock.mjs",
     "zhixing-workbench/packages/runtime/src/run-cycle.mjs",
     "zhixing-workbench/packages/runtime/src/knowledge-transaction.mjs",
+    "zhixing-workbench/packages/runtime/src/knowledge-maintenance.mjs",
+    "zhixing-workbench/packages/runtime/src/maintenance-prompt.md",
+    "zhixing-workbench/packages/runtime/src/maintenance-result.schema.json",
     "zhixing-workbench/packages/runtime/src/feishu-cli.mjs",
     "zhixing-workbench/packages/runtime/src/feishu-sync.mjs",
     "zhixing-workbench/.codex-plugin/plugin.json"
@@ -39,7 +42,7 @@ for (const asset of manifest.assets) {
     if (!listing.includes(required)) throw new Error(`${asset.file} 缺少 ${required}`);
   }
   if (listing.some((name) => /(?:^|\/)config\.js$/i.test(name)
-    || /zhixing-workbench\/(?:raw|wiki)\//i.test(name)
+    || /zhixing-workbench\/(?:raw|wiki|归档)\//i.test(name)
     || /(?:device|install)\.json$/i.test(name))) {
     throw new Error(`${asset.file} 包含设备配置或真实数据路径`);
   }

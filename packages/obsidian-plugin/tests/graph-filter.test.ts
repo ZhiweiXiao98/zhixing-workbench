@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ARTIFACT_GRAPH_FILTER, updateGraphConfigText } from "../src/graph-filter";
+import { ARCHIVE_GRAPH_FILTER, ARTIFACT_GRAPH_FILTER, updateGraphConfigText } from "../src/graph-filter";
 
 describe("relationship graph denoise", () => {
   it("adds the managed artifact exclusion without replacing existing graph preferences", () => {
@@ -8,7 +8,7 @@ describe("relationship graph denoise", () => {
 
     expect(result.ok).toBe(true);
     expect(JSON.parse(result.content)).toEqual({
-      search: `tag:#工作 ${ARTIFACT_GRAPH_FILTER}`,
+      search: `tag:#工作 ${ARTIFACT_GRAPH_FILTER} ${ARCHIVE_GRAPH_FILTER}`,
       showOrphans: true,
       repelStrength: 10
     });

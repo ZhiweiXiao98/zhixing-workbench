@@ -669,8 +669,8 @@ async function applyKnowledgeUpdates(vaultRoot, outcome, pairs, options, journal
   if (!Array.isArray(outcome.wiki_updates) || outcome.wiki_updates.length === 0) {
     throw new Error("已沉淀结果没有 AI 证据页更新");
   }
-  if (!outcome.memory_update || typeof outcome.memory_update !== "object") {
-    throw new Error("已沉淀结果没有面向本人阅读的经历文章");
+  if ((!outcome.memory_update || typeof outcome.memory_update !== "object") && outcome.memory_omitted !== true) {
+    throw new Error("已沉淀结果没有面向本人阅读的经历文章，也未明确声明该来源不属于本人经历");
   }
   const dailyPaths = new Set(pairs.map((pair) => pair.daily_path));
   const evidencePaths = uniqueStrings(outcome.wiki_updates.map((item) => item.path));
@@ -684,7 +684,7 @@ async function applyKnowledgeUpdates(vaultRoot, outcome, pairs, options, journal
     const targetExisting = path.resolve(previousTarget) === path.resolve(target)
       ? existing
       : await readText(target, "");
-    validateEvidenceContent(content, pairs, dailyPaths, existing, outcome.memory_update.path);
+    validateEvidenceContent(content, pairs, dailyPaths, existing, outcome.memory_update?.path);
     await assertStableIdUnique(vaultRoot, "zhixing_wiki_id", frontmatterValue(content, "zhixing_wiki_id"),
       [target, previousTarget]);
     const expected = String(update.expected_sha256 || "");
@@ -699,34 +699,36 @@ async function applyKnowledgeUpdates(vaultRoot, outcome, pairs, options, journal
   }
 
   const memory = outcome.memory_update;
-  const memoryTarget = safeVaultPath(vaultRoot, memory.path, "wiki/我的经历/");
-  const previousMemoryPath = String(memory.previous_path || memory.path);
-  const previousMemoryTarget = safeVaultPath(vaultRoot, previousMemoryPath, "wiki/我的经历/");
-  const memoryContent = String(memory.content || "").replace(/\r\n/g, "\n").trimEnd() + "\n";
-  const existingMemory = await readText(previousMemoryTarget, "");
-  const targetMemory = path.resolve(previousMemoryTarget) === path.resolve(memoryTarget)
-    ? existingMemory
-    : await readText(memoryTarget, "");
-  validateMemoryContent(memoryContent, outcome.digest, evidencePaths, existingMemory);
-  await assertStableIdUnique(vaultRoot, "zhixing_memory_id", frontmatterValue(memoryContent, "zhixing_memory_id"),
-    [memoryTarget, previousMemoryTarget]);
-  validateWriteIntent(memory, existingMemory, memoryContent, "经历文章");
-  const expectedMemory = String(memory.expected_sha256 || "");
-  if (expectedMemory && sha256(existingMemory) !== expectedMemory &&
-      sha256(memoryContent) !== sha256(existingMemory)) {
-    throw new Error(`${previousMemoryPath} 已被其他修改更新，拒绝覆盖`);
+  if (memory && typeof memory === "object") {
+    const memoryTarget = safeVaultPath(vaultRoot, memory.path, "wiki/我的经历/");
+    const previousMemoryPath = String(memory.previous_path || memory.path);
+    const previousMemoryTarget = safeVaultPath(vaultRoot, previousMemoryPath, "wiki/我的经历/");
+    const memoryContent = String(memory.content || "").replace(/\r\n/g, "\n").trimEnd() + "\n";
+    const existingMemory = await readText(previousMemoryTarget, "");
+    const targetMemory = path.resolve(previousMemoryTarget) === path.resolve(memoryTarget)
+      ? existingMemory
+      : await readText(memoryTarget, "");
+    validateMemoryContent(memoryContent, outcome.digest, evidencePaths, existingMemory);
+    await assertStableIdUnique(vaultRoot, "zhixing_memory_id", frontmatterValue(memoryContent, "zhixing_memory_id"),
+      [memoryTarget, previousMemoryTarget]);
+    validateWriteIntent(memory, existingMemory, memoryContent, "经历文章");
+    const expectedMemory = String(memory.expected_sha256 || "");
+    if (expectedMemory && sha256(existingMemory) !== expectedMemory &&
+        sha256(memoryContent) !== sha256(existingMemory)) {
+      throw new Error(`${previousMemoryPath} 已被其他修改更新，拒绝覆盖`);
+    }
+    if (targetMemory && sha256(targetMemory) !== sha256(memoryContent)) {
+      throw new Error(`${memory.path} 已存在其他内容，拒绝改名覆盖`);
+    }
+    writes.unshift({
+      target: memoryTarget,
+      previousTarget: previousMemoryTarget,
+      path: memory.path,
+      content: memoryContent,
+      existing: existingMemory,
+      targetExisting: targetMemory
+    });
   }
-  if (targetMemory && sha256(targetMemory) !== sha256(memoryContent)) {
-    throw new Error(`${memory.path} 已存在其他内容，拒绝改名覆盖`);
-  }
-  writes.unshift({
-    target: memoryTarget,
-    previousTarget: previousMemoryTarget,
-    path: memory.path,
-    content: memoryContent,
-    existing: existingMemory,
-    targetExisting: targetMemory
-  });
   const baselines = new Map();
   for (const update of writes) {
     baselines.set(relativeVaultPath(vaultRoot, update.target), update.targetExisting);
@@ -743,7 +745,7 @@ async function applyKnowledgeUpdates(vaultRoot, outcome, pairs, options, journal
   try {
     for (const update of writes) {
       await atomicText(update.target, update.content);
-      if (options["fault-stage"] === "evidence-write" && update.path === memory.path) {
+      if (options["fault-stage"] === "evidence-write" && update.path === memory?.path) {
         throw new Error("故障注入：经历文章写入后、AI 证据页写入前");
       }
       const written = await readText(update.target, "");
@@ -826,7 +828,7 @@ function validateEvidenceContent(content, pairs, dailyPaths, existing, memoryPat
   if (frontmatterValue(content, "zhixing_document") !== "evidence") {
     throw new Error("AI 证据页缺少 zhixing_document: evidence 托管边界");
   }
-  if (!hasMarkdownLink(content, memoryPath)) {
+  if (memoryPath && !hasMarkdownLink(content, memoryPath)) {
     throw new Error("AI 证据页没有链接对应的经历文章");
   }
   if (!hasProjects(content)) {
