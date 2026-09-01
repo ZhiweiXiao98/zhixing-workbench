@@ -43,6 +43,13 @@ export async function prepareMaintenance(vaultRoot, options = {}) {
     items.push(document);
     grouped.set(document.project_directory, items);
   }
+  for (const projectDirectory of Object.keys(state.projects || {})) {
+    if (grouped.has(projectDirectory)) continue;
+    const summaryPath = String(state.projects[projectDirectory]?.summary_path || "").replace(/\\/g, "/");
+    if (!summaryPath.startsWith(`wiki/${projectDirectory}/`)) continue;
+    const summary = await readText(vaultPath(vault, summaryPath), "");
+    if (frontmatterValue(summary, "zhixing_document") === "synthesis") grouped.set(projectDirectory, []);
+  }
   const maxProjects = integer(options.maxProjects ?? options["max-projects"], 2, 1, 8);
   const maxDocuments = integer(options.maxDocuments ?? options["max-documents"], 12, 2, 40);
   const maxChars = integer(options.maxChars ?? options["max-chars"], 120_000, 10_000, 400_000);
@@ -51,14 +58,19 @@ export async function prepareMaintenance(vaultRoot, options = {}) {
     if (projects.length >= maxProjects) break;
     const documents = grouped.get(projectDirectory).sort((a, b) => a.path.localeCompare(b.path, "zh-CN"));
     const projectState = state.projects?.[projectDirectory] || {};
-    const projectName = projectState.project_name || projectDisplayName(projectDirectory, documents);
+    const stateSummaryPath = String(projectState.summary_path || "").replace(/\\/g, "/");
+    const stateSummaryContent = stateSummaryPath.startsWith(`wiki/${projectDirectory}/`)
+      ? await readText(vaultPath(vault, stateSummaryPath), "")
+      : "";
+    const savedProjectName = String(projectState.project_name || "").trim();
+    const projectName = savedProjectName && !opaqueProjectName(savedProjectName)
+      ? savedProjectName
+      : projectDisplayName(projectDirectory, documents, stateSummaryContent);
     let summaryPath = `wiki/${projectDirectory}/${safeName(projectName)}知识总览.md`;
     let summaryContent = await readText(vaultPath(vault, summaryPath), "");
     let previousSummaryPath = "";
-    const stateSummaryPath = String(projectState.summary_path || "").replace(/\\/g, "/");
     if (!summaryContent && stateSummaryPath && stateSummaryPath !== summaryPath &&
         stateSummaryPath.startsWith(`wiki/${projectDirectory}/`)) {
-      const stateSummaryContent = await readText(vaultPath(vault, stateSummaryPath), "");
       if (frontmatterValue(stateSummaryContent, "zhixing_document") === "synthesis") {
         summaryContent = stateSummaryContent;
         previousSummaryPath = stateSummaryPath;
@@ -449,12 +461,12 @@ function rewriteLedgerForSummaryMoves(ledger, summaryWrites) {
   }));
 }
 
-function projectDisplayName(projectDirectory, documents) {
+function projectDisplayName(projectDirectory, documents, existingSummary = "") {
   const fallback = projectDirectory.split("/").at(-1) || "未归属";
   if (!opaqueProjectName(fallback)) return fallback;
   const counts = new Map();
-  for (const document of documents) {
-    for (const label of yamlStringList(document.content, "projects")) {
+  for (const source of [existingSummary, ...documents.map((document) => document.content)]) {
+    for (const label of yamlStringList(source, "projects")) {
       if (!label || opaqueProjectName(label) || label === fallback) continue;
       counts.set(label, (counts.get(label) || 0) + 1);
     }
@@ -468,7 +480,7 @@ function projectDisplayName(projectDirectory, documents) {
 
 function opaqueProjectName(value) {
   const name = String(value || "").trim();
-  return /^(?:[0-9a-f]{8,}(?:-fix)?|g-p-[a-z0-9-]+|w|memories)$/i.test(name);
+  return !name || /^(?:未命名项目|[0-9a-f]{8,}(?:-fix)?|g-p-[a-z0-9-]+|w|memories)$/i.test(name);
 }
 
 async function startJournal(vault, runId, relativePaths) {

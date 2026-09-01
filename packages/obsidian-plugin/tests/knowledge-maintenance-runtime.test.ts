@@ -103,10 +103,6 @@ describe("knowledge maintenance", () => {
   it("旧编号目录使用证据中的真实项目名，并事务迁移已有编号总览", async () => {
     const vault = await createVault();
     const project = "261b7368-fix";
-    const first = evidence("第一篇", "event:first").replace("  - 演示项目", "  - 轻待办（桌面 Web）");
-    const second = evidence("第二篇", "event:second").replace("  - 演示项目", "  - 轻待办（桌面 Web）");
-    await writeNote(vault, `wiki/${project}/第一篇.md`, first);
-    await writeNote(vault, `wiki/${project}/第二篇.md`, second);
     await writeNote(vault, `wiki/${project}/${project}知识总览.md`, [
       "---", "zhixing_synthesis_id: old-summary", "zhixing_document: synthesis", "projects:",
       "  - 轻待办（桌面 Web）", "last_synthesized: 2026-08-31", "trust: observed",
@@ -115,10 +111,18 @@ describe("knowledge maintenance", () => {
     ].join("\n"));
     await writeNote(vault, "raw/codex/knowledge-maintenance-state.json", JSON.stringify({
       schema_version: 1,
-      projects: { [project]: { summary_path: `wiki/${project}/${project}知识总览.md`, reviewed_shas: {} } }
+      projects: {
+        [project]: {
+          project_name: "未命名项目",
+          summary_path: `wiki/${project}/${project}知识总览.md`,
+          reviewed_shas: {},
+          archives: [{ archive_path: `归档/知行台/${project}/第一篇.md` }]
+        }
+      }
     }));
 
     const prepared = await prepareMaintenance(vault, { runId: "maintenance-readable-title" });
+    expect(prepared).toMatchObject({ project_count: 1, document_count: 0 });
     const contract = JSON.parse(await readFile(prepared.contract_path, "utf8"));
     expect(contract.projects[0]).toMatchObject({
       project_name: "轻待办（桌面 Web）",
