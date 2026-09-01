@@ -99,6 +99,39 @@ describe("knowledge maintenance", () => {
     expect(contract.projects[0].summary_path).toBe("wiki/演示项目/演示项目知识总览（知行台）.md");
     expect(await readFile(path.join(vault, "wiki", "演示项目", "演示项目知识总览.md"), "utf8")).toBe(manual);
   });
+
+  it("旧编号目录使用证据中的真实项目名，并事务迁移已有编号总览", async () => {
+    const vault = await createVault();
+    const project = "261b7368-fix";
+    const first = evidence("第一篇", "event:first").replace("  - 演示项目", "  - 轻待办（桌面 Web）");
+    const second = evidence("第二篇", "event:second").replace("  - 演示项目", "  - 轻待办（桌面 Web）");
+    await writeNote(vault, `wiki/${project}/第一篇.md`, first);
+    await writeNote(vault, `wiki/${project}/第二篇.md`, second);
+    await writeNote(vault, `wiki/${project}/${project}知识总览.md`, [
+      "---", "zhixing_synthesis_id: old-summary", "zhixing_document: synthesis", "projects:",
+      "  - 轻待办（桌面 Web）", "last_synthesized: 2026-08-31", "trust: observed",
+      "source_paths:", `  - wiki/${project}/第一篇.md`, "source_event_ids:", "  - event:first", "---",
+      `# ${project}知识总览`, "", "## 核心结论", "旧综合内容。", ""
+    ].join("\n"));
+    await writeNote(vault, "raw/codex/knowledge-maintenance-state.json", JSON.stringify({
+      schema_version: 1,
+      projects: { [project]: { summary_path: `wiki/${project}/${project}知识总览.md`, reviewed_shas: {} } }
+    }));
+
+    const prepared = await prepareMaintenance(vault, { runId: "maintenance-readable-title" });
+    const contract = JSON.parse(await readFile(prepared.contract_path, "utf8"));
+    expect(contract.projects[0]).toMatchObject({
+      project_name: "轻待办（桌面 Web）",
+      previous_summary_path: `wiki/${project}/${project}知识总览.md`,
+      summary_path: `wiki/${project}/轻待办（桌面 Web）知识总览.md`
+    });
+    await writeFile(prepared.result_path, JSON.stringify(result("maintenance-readable-title", contract.projects[0], "keep-active")), "utf8");
+    await commitMaintenance(vault, { runId: "maintenance-readable-title" });
+    expect(await readFile(path.join(vault, "wiki", project, "轻待办（桌面 Web）知识总览.md"), "utf8"))
+      .toContain("# 轻待办（桌面 Web）知识总览");
+    await expect(readFile(path.join(vault, "wiki", project, `${project}知识总览.md`), "utf8"))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
 });
 
 async function createVault(): Promise<string> {
