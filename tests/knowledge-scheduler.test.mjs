@@ -30,6 +30,57 @@ test("没有 last-cycle 但有可整理队列时首次启动立即补跑", async
   }
 });
 
+test("整理器已被占用时正常跳过且不记为失败", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-scheduler-organizer-busy-"));
+  try {
+    await mkdir(path.join(root, "raw", "codex"), { recursive: true });
+    await writeFile(path.join(root, "raw", "codex", "ingest-status.json"),
+      JSON.stringify({ ready_topics: 1 }), "utf8");
+    const result = await runDueKnowledgeCycle({
+      vault: root,
+      now: "2026-08-13T09:00:00.000Z",
+      finishedAt: "2026-08-13T09:00:30.000Z",
+      executorReady: true,
+      run: async () => {
+        const error = new Error("知行台正在整理，当前请求已跳过");
+        error.code = "ZHIXING_ORGANIZER_BUSY";
+        throw error;
+      }
+    });
+    assert.equal(result.ran, false);
+    assert.equal(result.ok, true);
+    assert.equal(result.reason, "organizer-busy");
+    assert.equal(result.state.status, "idle");
+    assert.equal(result.state.error, null);
+    assert.equal(result.state.failure_count, 0);
+    assert.equal(result.state.next_due, "2026-08-13T09:01:30.000Z");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("升级会清理旧版把整理器占用误记成失败的状态", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-scheduler-legacy-organizer-busy-"));
+  try {
+    const automation = path.join(root, "raw", "codex", "automation");
+    await mkdir(automation, { recursive: true });
+    await writeFile(path.join(automation, "schedule-state.json"), JSON.stringify({
+      status: "backoff",
+      next_due: "2026-08-13T09:05:00.000Z",
+      error: "知行台正在整理，当前请求已跳过",
+      failure_count: 1,
+      owner_pid: null
+    }), "utf8");
+    const state = await readScheduleState({ vault: root, now: "2026-08-13T09:00:30.000Z" });
+    assert.equal(state.status, "idle");
+    assert.equal(state.error, null);
+    assert.equal(state.failure_count, 0);
+    assert.equal(state.next_due, "2026-08-13T09:00:30.000Z");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("下一次真实工作完成可触发首次补跑，失败后进入可见退避", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "zhixing-scheduler-retry-"));
   try {

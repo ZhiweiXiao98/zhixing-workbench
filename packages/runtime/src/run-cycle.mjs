@@ -193,7 +193,11 @@ async function acquireLock(lockPath, staleMs) {
     handle = await open(lockPath, "wx");
     await handle.writeFile(JSON.stringify({ pid: process.pid, started_at: new Date().toISOString() }));
   } catch (error) {
-    if (error?.code === "EEXIST") throw new Error("知行台正在整理，当前请求已跳过");
+    if (error?.code === "EEXIST") {
+      const busy = new Error("知行台正在整理，当前请求已跳过");
+      busy.code = "ZHIXING_ORGANIZER_BUSY";
+      throw busy;
+    }
     throw error;
   }
   return async () => {

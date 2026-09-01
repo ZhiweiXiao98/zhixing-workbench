@@ -13,7 +13,18 @@ const ABSOLUTE_RUNNING_STALE_MS = 6 * 60 * 60_000;
 export async function readScheduleState(options) {
   const target = schedulePath(options.vault);
   const now = toDate(options.now);
-  const state = normalizeState(await readJson(target, null), now);
+  let state = normalizeState(await readJson(target, null), now);
+  if (state.status === "backoff" && organizerBusyError(state.error)) {
+    state = {
+      ...state,
+      next_due: now.toISOString(),
+      status: "idle",
+      error: null,
+      failure_count: Math.max(0, state.failure_count - 1),
+      owner_pid: null
+    };
+    await atomicJson(target, state);
+  }
   if (options.recoverStale === false) return state;
   if (state.status !== "running" || (!options.recoverInterrupted && !staleRunning(state, now))) return state;
   const recovered = {
@@ -56,6 +67,10 @@ export async function runDueKnowledgeCycle(options) {
       nextReadyAt: nextReadyTime(remainingQueue) });
     return { ran: true, ok: true, reason: decision.reason, state };
   } catch (error) {
+    if (organizerBusyError(error)) {
+      state = await finishBusyScheduleAttempt({ vault, state, now: options.finishedAt || new Date() });
+      return { ran: false, ok: true, reason: "organizer-busy", state };
+    }
     state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || new Date(), ok: false, error });
     return { ran: true, ok: false, reason: decision.reason, state, error: safeError(error) };
   }
@@ -183,6 +198,22 @@ export async function finishScheduleAttempt(options) {
   return updated;
 }
 
+async function finishBusyScheduleAttempt(options) {
+  const now = toDate(options.now);
+  const state = normalizeState(options.state, now);
+  const updated = {
+    ...state,
+    next_due: new Date(now.getTime() + CATCHUP_DELAY_MS).toISOString(),
+    status: "idle",
+    error: null,
+    owner_pid: null,
+    trigger: "organizer-busy",
+    catchup_pending: true
+  };
+  await atomicJson(schedulePath(options.vault), updated);
+  return updated;
+}
+
 async function repairLegacyFailedSchedule(options) {
   const state = normalizeState(options.state, options.now);
   const failure = failedCycleEvidence(options.lastCycle);
@@ -224,6 +255,11 @@ function normalizeState(value, now = new Date()) {
     owner_pid: Number.isInteger(value?.owner_pid) && value.owner_pid > 0 ? value.owner_pid : null,
     catchup_pending: Boolean(value?.catchup_pending)
   };
+}
+
+function organizerBusyError(value) {
+  return value?.code === "ZHIXING_ORGANIZER_BUSY" ||
+    String(value instanceof Error ? value.message : value || "").includes("知行台正在整理，当前请求已跳过");
 }
 
 function readyTopicCount(queue) {
