@@ -39,9 +39,10 @@ export async function prepareMaintenance(vaultRoot, options = {}) {
   const evidence = await scanEvidence(vault);
   const grouped = new Map();
   for (const document of evidence) {
-    const items = grouped.get(document.project_directory) || [];
+    const projectDirectory = knowledgeProjectDirectory(document, state);
+    const items = grouped.get(projectDirectory) || [];
     items.push(document);
-    grouped.set(document.project_directory, items);
+    grouped.set(projectDirectory, items);
   }
   for (const projectDirectory of Object.keys(state.projects || {})) {
     if (grouped.has(projectDirectory)) continue;
@@ -501,6 +502,32 @@ function projectDisplayName(projectDirectory, documents, existingSummary = "") {
 function opaqueProjectName(value) {
   const name = String(value || "").trim();
   return !name || /^(?:未命名项目|[0-9a-f]{8,}(?:-fix)?|g-p-[a-z0-9-]+|w|memories)$/i.test(name);
+}
+
+function knowledgeProjectDirectory(document, state) {
+  const ownDirectory = document.project_directory;
+  if (state.projects?.[ownDirectory]?.summary_path) return ownDirectory;
+  const labels = yamlStringList(document.content, "projects").filter((label) => !opaqueProjectName(label));
+  if (labels.length === 0 || labels.length > 2) return ownDirectory;
+  const primaryLabel = labels[0];
+  const candidates = Object.entries(state.projects || {}).filter(([projectDirectory, projectState]) =>
+    projectDirectory !== ownDirectory && projectState?.summary_path &&
+    projectLabelMatches(projectState.project_name, primaryLabel));
+  return candidates.length === 1 ? candidates[0][0] : ownDirectory;
+}
+
+function projectLabelMatches(projectName, label) {
+  const expected = canonicalProjectLabel(label);
+  if (!expected) return false;
+  return String(projectName || "").split(/\s+(?:与|和|及)\s+|[,+&/／]/)
+    .some((item) => canonicalProjectLabel(item) === expected);
+}
+
+function canonicalProjectLabel(value) {
+  return String(value || "").toLocaleLowerCase()
+    .replace(/[（(][^）)]*[）)]/g, "")
+    .replace(/[\s_-]+/g, "")
+    .trim();
 }
 
 async function startJournal(vault, runId, relativePaths) {

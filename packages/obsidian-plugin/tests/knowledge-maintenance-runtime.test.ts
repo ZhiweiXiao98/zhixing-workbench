@@ -123,6 +123,44 @@ describe("knowledge maintenance", () => {
     expect(updated).toContain("event:third");
   });
 
+  it("不同任务目录的单篇证据按明确真实项目标签汇入已有总览", async () => {
+    const vault = await createVault();
+    const target = "261b7368-fix";
+    const projectEvidence = (title: string, eventId: string) => evidence(title, eventId)
+      .replace("  - 演示项目", "  - 轻待办（桌面 Web）");
+    await writeNote(vault, `wiki/${target}/第一篇.md`, projectEvidence("第一篇", "event:first"));
+    await writeNote(vault, `wiki/${target}/第二篇.md`, projectEvidence("第二篇", "event:second"));
+    const first = await prepareMaintenance(vault, { runId: "maintenance-cross-directory" });
+    const firstContract = JSON.parse(await readFile(first.contract_path, "utf8"));
+    await writeFile(first.result_path,
+      JSON.stringify(result("maintenance-cross-directory", firstContract.projects[0], "keep-active")), "utf8");
+    await commitMaintenance(vault, { runId: "maintenance-cross-directory" });
+
+    const routed = evidence("跨目录证据", "event:routed")
+      .replace("projects:\n  - 演示项目", "projects:\n  - 轻待办\n  - 57f81631-fix");
+    await writeNote(vault, "wiki/57f81631-fix/跨目录证据.md", routed);
+    const multiProject = evidence("多项目周报", "event:multi")
+      .replace("projects:\n  - 演示项目", "projects:\n  - 轻待办\n  - 公司官网\n  - z");
+    await writeNote(vault, "wiki/z/多项目周报.md", multiProject);
+
+    const second = await prepareMaintenance(vault, { runId: "maintenance-cross-directory-2" });
+    expect(second).toMatchObject({ project_count: 1 });
+    const secondContract = JSON.parse(await readFile(second.contract_path, "utf8"));
+    expect(secondContract.projects[0].project_id).toBe(target);
+    expect(secondContract.projects[0].documents.some((item: { path: string }) =>
+      item.path === "wiki/57f81631-fix/跨目录证据.md")).toBe(true);
+    expect(secondContract.projects[0].documents.some((item: { path: string }) =>
+      item.path === "wiki/z/多项目周报.md")).toBe(false);
+    await writeFile(second.result_path,
+      JSON.stringify(result("maintenance-cross-directory-2", secondContract.projects[0], "keep-active")), "utf8");
+    await commitMaintenance(vault, { runId: "maintenance-cross-directory-2" });
+
+    const summary = await readFile(path.join(vault, "wiki", target, "轻待办（桌面 Web）知识总览.md"), "utf8");
+    expect(summary).toContain("wiki/57f81631-fix/跨目录证据.md");
+    const third = await prepareMaintenance(vault, { runId: "maintenance-cross-directory-3" });
+    expect(third).toMatchObject({ project_count: 0, document_count: 0 });
+  });
+
   it("不会接管用户手写的同名知识总览", async () => {
     const vault = await createVault();
     const manual = "# 演示项目知识总览\n\n这是我手写的项目入口，自动整理不能覆盖。\n";
