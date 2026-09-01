@@ -50,30 +50,44 @@ export async function prepareMaintenance(vaultRoot, options = {}) {
   for (const projectDirectory of [...grouped.keys()].sort((a, b) => a.localeCompare(b, "zh-CN"))) {
     if (projects.length >= maxProjects) break;
     const documents = grouped.get(projectDirectory).sort((a, b) => a.path.localeCompare(b.path, "zh-CN"));
-    const projectName = projectDirectory.split("/").at(-1) || "未归属";
+    const projectState = state.projects?.[projectDirectory] || {};
+    const projectName = projectState.project_name || projectDisplayName(projectDirectory, documents);
     let summaryPath = `wiki/${projectDirectory}/${safeName(projectName)}知识总览.md`;
     let summaryContent = await readText(vaultPath(vault, summaryPath), "");
+    let previousSummaryPath = "";
+    const stateSummaryPath = String(projectState.summary_path || "").replace(/\\/g, "/");
+    if (!summaryContent && stateSummaryPath && stateSummaryPath !== summaryPath &&
+        stateSummaryPath.startsWith(`wiki/${projectDirectory}/`)) {
+      const stateSummaryContent = await readText(vaultPath(vault, stateSummaryPath), "");
+      if (frontmatterValue(stateSummaryContent, "zhixing_document") === "synthesis") {
+        summaryContent = stateSummaryContent;
+        previousSummaryPath = stateSummaryPath;
+      }
+    }
     if (summaryContent && frontmatterValue(summaryContent, "zhixing_document") !== "synthesis") {
       summaryPath = `wiki/${projectDirectory}/${safeName(projectName)}知识总览（知行台）.md`;
       summaryContent = await readText(vaultPath(vault, summaryPath), "");
     }
     if (summaryContent && frontmatterValue(summaryContent, "zhixing_document") !== "synthesis") continue;
-    const projectState = state.projects?.[projectDirectory] || {};
     const changed = documents.filter((document) => projectState.reviewed_shas?.[document.path] !== document.sha256);
-    if (changed.length === 0) continue;
+    if (changed.length === 0 && !previousSummaryPath) continue;
     if (!summaryContent && documents.length < 2) continue;
     const selected = [];
     let selectedChars = summaryContent.length;
-    for (const document of [...changed, ...documents.filter((item) => !changed.includes(item))]) {
+    const candidates = changed.length > 0
+      ? [...changed, ...documents.filter((item) => !changed.includes(item))]
+      : documents;
+    for (const document of candidates) {
       if (selected.length >= maxDocuments || selectedChars + document.content.length > maxChars) continue;
       selected.push(document);
       selectedChars += document.content.length;
     }
-    if (!selected.some((document) => changed.includes(document))) continue;
+    if (changed.length > 0 && !selected.some((document) => changed.includes(document))) continue;
     projects.push({
       project_id: projectDirectory,
       project_name: projectName,
       summary_path: summaryPath,
+      previous_summary_path: previousSummaryPath || null,
       summary_expected_sha256: summaryContent ? sha256(summaryContent) : "",
       existing_summary: summaryContent || null,
       documents: selected
@@ -131,12 +145,14 @@ export async function commitMaintenance(vaultRoot, options = {}) {
   state.projects ||= {};
   const summaryWrites = [];
   const archives = [];
+  const archiveRewrites = [];
   let keptActive = 0;
 
   for (const project of contract.projects) {
     const outcome = outcomes.get(project.project_id);
     validateOutcome(project, outcome);
-    const currentSummary = await readText(vaultPath(vault, project.summary_path), "");
+    const currentSummaryPath = project.previous_summary_path || project.summary_path;
+    const currentSummary = await readText(vaultPath(vault, currentSummaryPath), "");
     if ((currentSummary ? sha256(currentSummary) : "") !== String(project.summary_expected_sha256 || "")) {
       throw new Error(`${project.summary_path} 在综合期间被修改，拒绝覆盖`);
     }
@@ -168,6 +184,7 @@ export async function commitMaintenance(vaultRoot, options = {}) {
       }
       summaryWrites.push({
         path: project.summary_path,
+        previous_path: project.previous_summary_path || undefined,
         content: renderSummary(project, outcome.summary, archivedPaths, contract.generated_at)
       });
     } else {
@@ -186,26 +203,45 @@ export async function commitMaintenance(vaultRoot, options = {}) {
       }], (item) => item.original_path);
     }
     projectState.summary_path = project.summary_path;
+    projectState.project_name = project.project_name;
     projectState.last_successful_run = contract.generated_at;
     state.projects[project.project_id] = projectState;
+    if (project.previous_summary_path && project.previous_summary_path !== project.summary_path) {
+      for (const archived of projectState.archives || []) {
+        const archiveContent = await readText(vaultPath(vault, archived.archive_path), "");
+        if (!archiveContent) continue;
+        const updated = archiveContent
+          .split(project.previous_summary_path).join(project.summary_path)
+          .split(wikiLink(project.previous_summary_path)).join(wikiLink(project.summary_path));
+        if (updated !== archiveContent) archiveRewrites.push({ path: archived.archive_path, content: updated });
+      }
+    }
   }
 
   rewriteLedgerForArchives(ledger, archives);
+  rewriteLedgerForSummaryMoves(ledger, summaryWrites);
   state.updated_at = new Date().toISOString();
   const touched = [
-    ...summaryWrites.map((item) => item.path),
+    ...summaryWrites.flatMap((item) => [item.path, item.previous_path]),
     ...archives.flatMap((item) => [item.source_path, item.archive_path]),
+    ...archiveRewrites.map((item) => item.path),
     STATE_PATH,
     LEDGER_PATH
   ];
   const journal = await startJournal(vault, contract.run_id, touched);
   try {
     for (const item of summaryWrites) await atomicText(vaultPath(vault, item.path), item.content);
+    for (const item of archiveRewrites) await atomicText(vaultPath(vault, item.path), item.content);
     for (const [index, item] of archives.entries()) {
       await atomicText(vaultPath(vault, item.archive_path), item.content);
       await unlink(vaultPath(vault, item.source_path));
       if ((options.faultStage || options["fault-stage"]) === "first-archive" && index === 0) {
         throw new Error("故障注入：首篇归档后中断");
+      }
+    }
+    for (const item of summaryWrites) {
+      if (item.previous_path && item.previous_path !== item.path) {
+        await unlink(vaultPath(vault, item.previous_path));
       }
     }
     await atomicJson(ledgerPath, ledger);
@@ -393,6 +429,46 @@ function rewriteLedgerForArchives(ledger, archives) {
       updated_at: new Date().toISOString()
     };
   });
+}
+
+function rewriteLedgerForSummaryMoves(ledger, summaryWrites) {
+  const replacements = new Map(summaryWrites
+    .filter((item) => item.previous_path && item.previous_path !== item.path)
+    .map((item) => [item.previous_path, item.path]));
+  if (replacements.size === 0 || !Array.isArray(ledger.outcomes)) return;
+  const replace = (items) => uniqueStrings((items || []).map((item) => replacements.get(item) || item));
+  ledger.outcomes = ledger.outcomes.map((outcome) => ({
+    ...outcome,
+    wiki_paths: replace(outcome.wiki_paths),
+    evidence_paths: replace(outcome.evidence_paths),
+    knowledge_changes: uniqueObjects((outcome.knowledge_changes || []).map((change) => ({
+      ...change,
+      path: replacements.get(change.path) || change.path,
+      title: replacements.has(change.path) ? path.posix.basename(replacements.get(change.path), ".md") : change.title
+    })), (change) => `${change.action}:${change.path}`)
+  }));
+}
+
+function projectDisplayName(projectDirectory, documents) {
+  const fallback = projectDirectory.split("/").at(-1) || "未归属";
+  if (!opaqueProjectName(fallback)) return fallback;
+  const counts = new Map();
+  for (const document of documents) {
+    for (const label of yamlStringList(document.content, "projects")) {
+      if (!label || opaqueProjectName(label) || label === fallback) continue;
+      counts.set(label, (counts.get(label) || 0) + 1);
+    }
+  }
+  const ranked = [...counts].sort((left, right) =>
+    right[1] - left[1] || left[0].localeCompare(right[0], "zh-CN"));
+  if (ranked.length === 0) return "未命名项目";
+  if (ranked.length === 1 || ranked[0][1] > ranked[1][1]) return ranked[0][0];
+  return `${ranked[0][0]} 与 ${ranked[1][0]}`;
+}
+
+function opaqueProjectName(value) {
+  const name = String(value || "").trim();
+  return /^(?:[0-9a-f]{8,}(?:-fix)?|g-p-[a-z0-9-]+|w|memories)$/i.test(name);
 }
 
 async function startJournal(vault, runId, relativePaths) {
