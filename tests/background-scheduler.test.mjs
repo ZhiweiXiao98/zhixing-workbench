@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { inspectBackgroundSchedulerRegistration, registerBackgroundScheduler, removeBackgroundScheduler,
-  startupEntryDefinition } from "../packages/runtime/src/background-registration.mjs";
+  launchBackgroundScheduler, startupEntryDefinition } from "../packages/runtime/src/background-registration.mjs";
 import { runBackgroundLoop, runBackgroundTick } from "../packages/runtime/src/background-scheduler.mjs";
 
 test("三端只注册一个套件自有后台入口并共用同一调度运行时", () => {
@@ -113,7 +113,8 @@ test("同版本重复启动只保留一个后台宿主", async () => {
     syncDesktop: async () => { notifySync(); await syncWaiting; return { completed_turns: 0, last_event_at: null }; },
     discoverCodex: async () => ({ path: "C:\\Fixture\\codex.exe", version: "codex-cli 0.147.0" }),
     probeExecutor: async () => ({ supported: true, error: null }),
-    runKnowledge: async () => undefined
+    runKnowledge: async () => undefined,
+    startReceiver: false
   };
   try {
     const first = runBackgroundLoop(options);
@@ -124,6 +125,54 @@ test("同版本重复启动只保留一个后台宿主", async () => {
     assert.equal((await first).active, true);
   } finally {
     releaseSync?.();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("更新安装启动后台时等待旧版本主动交接", () => {
+  let invocation;
+  launchBackgroundScheduler({
+    nodePath: "C:\\Node\\node.exe",
+    programRoot: "C:\\Program",
+    configRoot: "C:\\Config",
+    spawn(command, args, options) {
+      invocation = { command, args, options };
+      return { pid: 42, unref() {} };
+    }
+  });
+  assert.deepEqual(invocation.args.slice(-3), ["--config", path.resolve("C:\\Config"), "--handoff"]);
+  assert.equal(invocation.options.windowsHide, true);
+});
+
+test("Obsidian 未打开时后台宿主仍持续托管网页接收器", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-background-receiver-"));
+  const vault = path.join(root, "vault");
+  const configRoot = path.join(root, "config");
+  let received;
+  let closed = false;
+  const server = { listening: true, close(callback) { closed = true; callback(); } };
+  try {
+    const result = await runBackgroundLoop({
+      configRoot,
+      install: {
+        vaultRoot: vault,
+        programRoot: path.join(root, "program"),
+        device: { receiver_token: "fictional-token-long-enough", receiver_port: 43123 }
+      },
+      once: true,
+      createReceiver: async (options) => { received = options; return server; },
+      syncDesktop: async () => ({ completed_turns: 0, last_event_at: null }),
+      discoverCodex: async () => ({ path: "C:\\Fixture\\codex.exe", version: "codex-cli 0.151.0" }),
+      probeExecutor: async () => ({ supported: false, error: "fixture 不执行知识整理" })
+    });
+    assert.deepEqual(received, {
+      vault,
+      token: "fictional-token-long-enough",
+      port: 43123
+    });
+    assert.equal(result.receiver.owned, true);
+    assert.equal(closed, true);
+  } finally {
     await rm(root, { recursive: true, force: true });
   }
 });

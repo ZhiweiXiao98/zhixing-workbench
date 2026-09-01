@@ -159,6 +159,38 @@ describe("knowledge queue", () => {
     });
   });
 
+  it("同一 Codex 长会话跨工作日自动拆段", () => {
+    const first = pair("day-a", "完善日历筛选", "当天完成筛选验证");
+    first.session_id = "cross-day-session";
+    const nextDay = pair("day-b", "继续处理桌面端发布", "第二天完成发布验证");
+    nextDay.session_id = "cross-day-session";
+    nextDay.date = "2026-07-25";
+    nextDay.captured_at = "2026-07-25T08:00:00+08:00";
+    nextDay.daily_path = "raw/codex/daily/2026-07-25.md";
+
+    const compiled = compileKnowledgeQueue([first, nextDay], [], sessionIndex, {
+      maxTopics: 10,
+      maxPairs: 20,
+      now: "2026-07-26T00:00:00+08:00"
+    });
+
+    expect(compiled.queue.candidate_topics).toBe(2);
+    expect(compiled.selectedTopics.map((topic: { pair_count: number }) => topic.pair_count)).toEqual([1, 1]);
+  });
+
+  it("ChatGPT 项目镜像优先使用可读项目名", () => {
+    const mirrored = pair("named-project", "完善中文界面", "已经完成验证");
+    mirrored.cwd = "C:\\Users\\Example\\.codex\\.chatgpt-projects\\g-p-fixture";
+    (mirrored as typeof mirrored & { project_name: string }).project_name = "汉化 t3";
+    const compiled = compileKnowledgeQueue([mirrored], [], sessionIndex, {
+      maxTopics: 10,
+      maxPairs: 20,
+      now: "2026-07-25T00:00:00+08:00"
+    });
+
+    expect(compiled.selectedTopics[0].project).toBe("汉化 t3");
+  });
+
   it("同一长会话切换强任务锚点时拆段，没有新锚点的继续轮次仍继承", () => {
     const first = pair("anchor-a", "处理 C:\\project\\.agent\\tasks\\calendar-filter", "已完成");
     first.session_id = "anchor-session";

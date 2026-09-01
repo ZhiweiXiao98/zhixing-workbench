@@ -6,8 +6,11 @@ import { discoverExecutable, probeCodexExecutor } from "./executable-discovery.m
 import { runOwnedAutomationTick } from "./automation-owner.mjs";
 import { acquireBackgroundHostLock, withLeaseHeartbeat } from "./runtime-lock.mjs";
 import { runCycle } from "./run-cycle.mjs";
+import { createReceiver } from "./receiver-server.mjs";
 
 const DEFAULT_INTERVAL_MS = 60_000;
+
+let receiverServer;
 
 export async function runBackgroundTick(options = {}) {
   const now = toDate(options.now);
@@ -103,6 +106,10 @@ export async function runBackgroundLoop(options = {}) {
   if (!hostLease.acquired) {
     return { active: false, ran: false, ok: true, reason: "host-already-running", owner: hostLease.owner };
   }
+  let receiver = await ensureBackgroundReceiver(options).catch((error) => ({
+    owned: false,
+    error: safeError(error)
+  }));
   let stopped = false;
   const stop = () => { stopped = true; };
   process.once("SIGINT", stop);
@@ -110,17 +117,62 @@ export async function runBackgroundLoop(options = {}) {
   return withLeaseHeartbeat(hostLease, async () => {
     try {
       while (!stopped) {
+        if (!receiver.owned && !receiver.disabled) {
+          receiver = await ensureBackgroundReceiver(options).catch((error) => ({
+            owned: false,
+            error: safeError(error)
+          }));
+        }
         const result = await runBackgroundTick(options);
         if (!result.active) return result;
-        if (options.once) return result;
+        if (options.once) return { ...result, receiver: receiverResult(receiver) };
         await delay(interval);
       }
-      return { active: false, ran: false, ok: true, reason: "stopped" };
+      return { active: false, ran: false, ok: true, reason: "stopped", receiver: receiverResult(receiver) };
     } finally {
       process.off("SIGINT", stop);
       process.off("SIGTERM", stop);
+      if (receiver.owned) {
+        await closeServer(receiver.server);
+        receiverServer = undefined;
+      }
     }
   });
+}
+
+async function ensureBackgroundReceiver(options) {
+  if (options.startReceiver === false) return { owned: false, disabled: true };
+  if (receiverServer?.listening) return { owned: true, server: receiverServer };
+  const installed = options.install || await resolveInstall(options.configRoot
+    ? { env: { ...process.env, ZHIXING_CONFIG: path.resolve(options.configRoot) } }
+    : undefined);
+  if (!installed.vaultRoot || !installed.device?.receiver_token) {
+    return { owned: false, error: "本机接收器尚未配置" };
+  }
+  try {
+    receiverServer = await (options.createReceiver || createReceiver)({
+      vault: installed.vaultRoot,
+      token: installed.device.receiver_token,
+      port: installed.device.receiver_port
+    });
+    return { owned: true, server: receiverServer };
+  } catch (error) {
+    if (error?.code === "EADDRINUSE") return { owned: false, shared: true };
+    throw error;
+  }
+}
+
+function closeServer(server) {
+  return new Promise((resolve) => server.close(() => resolve()));
+}
+
+function receiverResult(receiver) {
+  return {
+    owned: Boolean(receiver.owned),
+    shared: Boolean(receiver.shared),
+    disabled: Boolean(receiver.disabled),
+    error: receiver.error || null
+  };
 }
 
 function parseArgs(values) {
@@ -158,11 +210,20 @@ function delay(milliseconds) {
 
 if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2));
-  runBackgroundLoop({ configRoot: args.config, once: Boolean(args.once) }).then((result) => {
+  runFromCli(args).then((result) => {
     if (args.once) process.stdout.write(`${JSON.stringify(result)}\n`);
     if (!result.ok && result.reason === "not-installed") process.exitCode = 2;
   }).catch((error) => {
     process.stderr.write(`${safeError(error)}\n`);
     process.exitCode = 1;
   });
+}
+
+async function runFromCli(args) {
+  const deadline = Date.now() + (args.handoff ? 10 * 60_000 : 0);
+  do {
+    const result = await runBackgroundLoop({ configRoot: args.config, once: Boolean(args.once) });
+    if (result.reason !== "host-already-running" || !args.handoff || Date.now() >= deadline) return result;
+    await delay(1_000);
+  } while (true);
 }

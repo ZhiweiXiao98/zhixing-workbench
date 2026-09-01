@@ -15,6 +15,31 @@ afterEach(async () => {
 });
 
 describe("knowledge transaction", () => {
+  it("ChatGPT 项目镜像目录解析为人类可读项目名", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "zhixing-project-name-"));
+    temporary.push(root);
+    const vault = path.join(root, "vault");
+    const project = path.join(root, ".codex", ".chatgpt-projects", "g-p-fixture");
+    await mkdir(path.join(vault, "raw", "codex", "events"), { recursive: true });
+    await mkdir(project, { recursive: true });
+    await writeFile(path.join(project, "AGENTS.md"),
+      "# ChatGPT project context\n\nThis directory is a local mirror of the ChatGPT project “汉化 t3”.\n", "utf8");
+    const prompt = record("project-name:prompt", "UserPromptSubmit", "整理汉化经验");
+    const stop = record("project-name:stop", "Stop", "汉化经验已经验证");
+    prompt.cwd = project;
+    stop.cwd = project;
+    await writeFile(path.join(vault, "raw", "codex", "events", "2026-07-24.jsonl"),
+      `${JSON.stringify(prompt)}\n${JSON.stringify(stop)}\n`, "utf8");
+
+    await run(["prepare", "--vault", vault, "--run-id", "project-name-run", "--since", "2026-07-20"]);
+    const contract = JSON.parse(await readFile(
+      path.join(vault, "raw", "codex", "ingest-run-contract.json"),
+      "utf8"
+    ));
+    expect(contract.topics[0].project).toBe("汉化 t3");
+    expect(contract.topics[0].project_directory).toBe("汉化 t3");
+  });
+
   it("Wiki 写入失败时不推进状态，下次成功重试且继续幂等", async () => {
     const vault = await mkdtemp(path.join(os.tmpdir(), "zhixing-transaction-"));
     temporary.push(vault);
@@ -396,6 +421,60 @@ describe("knowledge transaction", () => {
       path.join(vault, "wiki", "我的经历", "project", "OpenAI Coding 套餐接入后的计费经验.md"),
       "utf8"
     )).toContain("# OpenAI Coding 套餐接入后的计费经验");
+  });
+
+  it("托管知识标题变化时移动原文件并更新账本", async () => {
+    const vault = await createSinglePairVault("rename-managed", true);
+    await run(["prepare", "--vault", vault, "--run-id", "rename-first", "--since", "2026-07-20"]);
+    let contract = JSON.parse(await readFile(
+      path.join(vault, "raw", "codex", "ingest-run-contract.json"),
+      "utf8"
+    ));
+    let resultPath = path.join(vault, ...contract.result_path.split("/"));
+    await mkdir(path.dirname(resultPath), { recursive: true });
+    await writeFile(resultPath, JSON.stringify(semanticResult(
+      "rename-first",
+      contract.topics[0].id
+    )), "utf8");
+    await run(["commit", "--vault", vault, "--run-id", "rename-first"]);
+
+    const oldMemory = path.join(vault, "wiki", "我的经历", "project", "知识为什么没有按预期整理.md");
+    const oldEvidence = path.join(vault, "wiki", "project", "知识整理异常的判断与恢复.md");
+    const eventPath = path.join(vault, "raw", "codex", "events", "2026-07-24.jsonl");
+    await writeFile(eventPath, [
+      JSON.stringify(record(`rename:delta:prompt:${"e".repeat(64)}`, "UserPromptSubmit", "继续", "delta-turn")),
+      JSON.stringify(record(`rename:delta:stop:${"f".repeat(64)}`, "Stop", "补充验证完成", "delta-turn"))
+    ].join("\n") + "\n", { encoding: "utf8", flag: "a" });
+
+    await run([
+      "prepare", "--vault", vault, "--run-id", "rename-second", "--since", "2026-07-20",
+      "--backfill-unsettled", "--retry-backoff-hours", "0"
+    ]);
+    contract = JSON.parse(await readFile(
+      path.join(vault, "raw", "codex", "ingest-run-contract.json"),
+      "utf8"
+    ));
+    const semantic = semanticResult("rename-second", contract.topics[0].id);
+    semantic.outcomes[0]!.memory_document.title = "我把知识整理恢复了";
+    semantic.outcomes[0]!.evidence_document.title = "知识整理恢复与验证";
+    resultPath = path.join(vault, ...contract.result_path.split("/"));
+    await writeFile(resultPath, JSON.stringify(semantic), "utf8");
+    await run(["commit", "--vault", vault, "--run-id", "rename-second"]);
+
+    await expect(readFile(oldMemory, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(oldEvidence, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(
+      path.join(vault, "wiki", "我的经历", "project", "我把知识整理恢复了.md"),
+      "utf8"
+    )).toContain("# 我把知识整理恢复了");
+    const ledger = JSON.parse(await readFile(
+      path.join(vault, "raw", "codex", "knowledge-settlements.json"),
+      "utf8"
+    ));
+    expect(ledger.outcomes.find((item: { id: string }) => item.id === contract.topics[0].id)).toMatchObject({
+      memory_path: "wiki/我的经历/project/我把知识整理恢复了.md",
+      evidence_paths: ["wiki/project/知识整理恢复与验证.md"]
+    });
   });
 
   it("已成功主题的新证据待沉淀时保留旧 Wiki，并只让增量等待重试", async () => {

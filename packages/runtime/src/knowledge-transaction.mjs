@@ -677,44 +677,72 @@ async function applyKnowledgeUpdates(vaultRoot, outcome, pairs, options, journal
   const writes = [];
   for (const update of outcome.wiki_updates) {
     const target = safeVaultPath(vaultRoot, update.path, "wiki/");
+    const previousPath = String(update.previous_path || update.path);
+    const previousTarget = safeVaultPath(vaultRoot, previousPath, "wiki/");
     const content = String(update.content || "").replace(/\r\n/g, "\n").trimEnd() + "\n";
-    const existing = await readText(target, "");
+    const existing = await readText(previousTarget, "");
+    const targetExisting = path.resolve(previousTarget) === path.resolve(target)
+      ? existing
+      : await readText(target, "");
     validateEvidenceContent(content, pairs, dailyPaths, existing, outcome.memory_update.path);
-    await assertStableIdUnique(vaultRoot, "zhixing_wiki_id", frontmatterValue(content, "zhixing_wiki_id"), target);
+    await assertStableIdUnique(vaultRoot, "zhixing_wiki_id", frontmatterValue(content, "zhixing_wiki_id"),
+      [target, previousTarget]);
     const expected = String(update.expected_sha256 || "");
     validateWriteIntent(update, existing, content, "AI 证据页");
     if (expected && sha256(existing) !== expected && sha256(content) !== sha256(existing)) {
-      throw new Error(`${update.path} 已被其他修改更新，拒绝覆盖`);
+      throw new Error(`${previousPath} 已被其他修改更新，拒绝覆盖`);
     }
-    writes.push({ target, path: update.path, content, existing });
+    if (targetExisting && sha256(targetExisting) !== sha256(content)) {
+      throw new Error(`${update.path} 已存在其他内容，拒绝改名覆盖`);
+    }
+    writes.push({ target, previousTarget, path: update.path, content, existing, targetExisting });
   }
 
   const memory = outcome.memory_update;
   const memoryTarget = safeVaultPath(vaultRoot, memory.path, "wiki/我的经历/");
+  const previousMemoryPath = String(memory.previous_path || memory.path);
+  const previousMemoryTarget = safeVaultPath(vaultRoot, previousMemoryPath, "wiki/我的经历/");
   const memoryContent = String(memory.content || "").replace(/\r\n/g, "\n").trimEnd() + "\n";
-  const existingMemory = await readText(memoryTarget, "");
+  const existingMemory = await readText(previousMemoryTarget, "");
+  const targetMemory = path.resolve(previousMemoryTarget) === path.resolve(memoryTarget)
+    ? existingMemory
+    : await readText(memoryTarget, "");
   validateMemoryContent(memoryContent, outcome.digest, evidencePaths, existingMemory);
-  await assertStableIdUnique(vaultRoot, "zhixing_memory_id", frontmatterValue(memoryContent, "zhixing_memory_id"), memoryTarget);
+  await assertStableIdUnique(vaultRoot, "zhixing_memory_id", frontmatterValue(memoryContent, "zhixing_memory_id"),
+    [memoryTarget, previousMemoryTarget]);
   validateWriteIntent(memory, existingMemory, memoryContent, "经历文章");
   const expectedMemory = String(memory.expected_sha256 || "");
   if (expectedMemory && sha256(existingMemory) !== expectedMemory &&
       sha256(memoryContent) !== sha256(existingMemory)) {
-    throw new Error(`${memory.path} 已被其他修改更新，拒绝覆盖`);
+    throw new Error(`${previousMemoryPath} 已被其他修改更新，拒绝覆盖`);
   }
-  writes.unshift({ target: memoryTarget, path: memory.path, content: memoryContent, existing: existingMemory });
-  const journalEntries = writes.map((update) => ({
-    path: relativeVaultPath(vaultRoot, update.target),
-    existed: Boolean(update.existing),
-    original_base64: Buffer.from(update.existing, "utf8").toString("base64")
+  if (targetMemory && sha256(targetMemory) !== sha256(memoryContent)) {
+    throw new Error(`${memory.path} 已存在其他内容，拒绝改名覆盖`);
+  }
+  writes.unshift({
+    target: memoryTarget,
+    previousTarget: previousMemoryTarget,
+    path: memory.path,
+    content: memoryContent,
+    existing: existingMemory,
+    targetExisting: targetMemory
+  });
+  const baselines = new Map();
+  for (const update of writes) {
+    baselines.set(relativeVaultPath(vaultRoot, update.target), update.targetExisting);
+    baselines.set(relativeVaultPath(vaultRoot, update.previousTarget), update.existing);
+  }
+  const journalEntries = [...baselines].map(([entryPath, existing]) => ({
+    path: entryPath,
+    existed: Boolean(existing),
+    original_base64: Buffer.from(existing, "utf8").toString("base64")
   }));
   journal.files.push(...journalEntries);
   await atomicJson(journal.path, journal);
 
-  const promoted = [];
   try {
     for (const update of writes) {
       await atomicText(update.target, update.content);
-      promoted.push(update);
       if (options["fault-stage"] === "evidence-write" && update.path === memory.path) {
         throw new Error("故障注入：经历文章写入后、AI 证据页写入前");
       }
@@ -723,17 +751,23 @@ async function applyKnowledgeUpdates(vaultRoot, outcome, pairs, options, journal
         throw new Error(`${update.path} 写入后回读不一致`);
       }
     }
+    for (const update of writes) {
+      if (path.resolve(update.previousTarget) !== path.resolve(update.target)) {
+        await unlink(update.previousTarget);
+      }
+    }
     if (options["fault-stage"] === "documents-written-crash") {
       process.exit(86);
     }
   } catch (error) {
     let rollbackError;
-    for (const update of promoted.reverse()) {
+    for (const entry of [...journalEntries].reverse()) {
       try {
-        if (update.existing) {
-          await atomicText(update.target, update.existing);
+        const target = safeVaultPath(vaultRoot, entry.path, "wiki/");
+        if (entry.existed) {
+          await atomicText(target, Buffer.from(entry.original_base64, "base64").toString("utf8"));
         } else {
-          await unlink(update.target).catch(() => undefined);
+          await unlink(target).catch(() => undefined);
         }
       } catch (currentError) {
         rollbackError = rollbackError || currentError;
@@ -1002,13 +1036,14 @@ function validateOutcomePathClaims(outcomes) {
 function validateExistingKnowledgeReuse(topic, outcome) {
   const existing = topic.existing_knowledge?.documents || [];
   const memory = existing.find((document) => document.role === "memory" && document.managed);
-  if (memory && outcome.memory_update?.path !== memory.path) {
-    throw new Error("同一主题已经有经历文章，必须更新原页面，不能重复新建");
+  if (memory && outcome.memory_update?.path !== memory.path && outcome.memory_update?.previous_path !== memory.path) {
+    throw new Error("同一主题已经有经历文章，必须更新或安全改名原页面，不能重复新建");
   }
   const managedEvidence = existing
     .filter((document) => document.role === "evidence" && document.managed)
     .map((document) => document.path);
-  const returnedEvidence = new Set((outcome.wiki_updates || []).map((update) => update.path));
+  const returnedEvidence = new Set((outcome.wiki_updates || [])
+    .flatMap((update) => [update.path, update.previous_path]).filter(Boolean));
   for (const evidencePath of managedEvidence) {
     if (!returnedEvidence.has(evidencePath)) {
       throw new Error(`同一主题已有 AI 证据页必须继续更新：${evidencePath}`);
@@ -1016,13 +1051,14 @@ function validateExistingKnowledgeReuse(topic, outcome) {
   }
 }
 
-async function assertStableIdUnique(vaultRoot, key, id, target) {
+async function assertStableIdUnique(vaultRoot, key, id, targets) {
   if (!id) {
     return;
   }
+  const excluded = new Set((Array.isArray(targets) ? targets : [targets]).map((target) => path.resolve(target)));
   const wikiRoot = path.join(vaultRoot, "wiki");
   for (const candidate of await markdownFiles(wikiRoot)) {
-    if (path.resolve(candidate) === path.resolve(target)) {
+    if (excluded.has(path.resolve(candidate))) {
       continue;
     }
     const content = await readText(candidate, "");
@@ -1179,6 +1215,9 @@ function projectLabelFromPairs(pairs) {
   if (!pair) {
     return "未归属";
   }
+  if (String(pair.project_name || "").trim()) {
+    return String(pair.project_name).trim();
+  }
   if (pair.source === "chatgpt_web") {
     return "ChatGPT";
   }
@@ -1240,7 +1279,27 @@ async function readEvents(vaultRoot) {
       }
     }
   }
+  const projectNames = new Map();
+  for (const record of records) {
+    if (record.source !== "codex" || record.project_name || !record.cwd) continue;
+    if (!projectNames.has(record.cwd)) {
+      projectNames.set(record.cwd, await chatgptProjectName(record.cwd));
+    }
+    record.project_name = projectNames.get(record.cwd) || undefined;
+  }
   return records;
+}
+
+async function chatgptProjectName(cwd) {
+  const normalized = String(cwd || "").replace(/\\/g, "/");
+  const marker = "/.codex/.chatgpt-projects/";
+  const markerIndex = normalized.toLocaleLowerCase().indexOf(marker);
+  if (markerIndex < 0) return undefined;
+  const projectId = normalized.slice(markerIndex + marker.length).split("/")[0];
+  if (!/^g-p-[a-z0-9]+$/i.test(projectId)) return undefined;
+  const projectRoot = normalized.slice(0, markerIndex + marker.length) + projectId;
+  const agents = await readText(path.join(projectRoot, "AGENTS.md"), "");
+  return agents.match(/local mirror of the ChatGPT project\s*[“"]([^”"\r\n]+)[”"]/i)?.[1]?.trim();
 }
 
 export function pairRecords(records) {
@@ -1300,6 +1359,7 @@ export function pairRecords(records) {
       daily_path: `raw/${source === "chatgpt_web" ? "chatgpt" : "codex"}/daily/${date}.md`,
       captured_at: prompt.captured_at,
       cwd: prompt.cwd || "",
+      project_name: prompt.project_name || stop.project_name || "",
       title: prompt.title || "",
       url: prompt.url || "",
       prompt_content: prompt.content || "",

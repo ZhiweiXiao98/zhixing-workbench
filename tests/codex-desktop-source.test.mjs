@@ -84,6 +84,34 @@ test("Codex Desktop 0.149 结构化事件可被采集", async () => {
   }
 });
 
+for (const version of ["0.150.0", "0.151.0-alpha.7.2"]) {
+  test(`Codex Desktop ${version} 结构化事件可被补采`, async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "zhixing-desktop-current-"));
+    const vault = path.join(root, "vault");
+    const codexHome = path.join(root, "codex-home");
+    const session = path.join(codexHome, "sessions", "fixture-current.jsonl");
+    try {
+      await mkdir(path.dirname(session), { recursive: true });
+      await writeFile(session, lines([
+        meta("desktop-session-current", version),
+        event("2026-08-13T09:00:00.000Z", "task_started", { turn_id: "turn-current" }),
+        context("2026-08-13T09:00:00.100Z", "turn-current"),
+        event("2026-08-13T09:00:01.000Z", "user_message", { message: "补采当前桌面版本" }),
+        event("2026-08-13T09:00:02.000Z", "task_complete", {
+          turn_id: "turn-current",
+          last_agent_message: "当前版本补采完成"
+        })
+      ]), "utf8");
+      const result = await syncCodexDesktop({ vault, codexHome, now: NOW });
+      assert.equal(result.supported, true);
+      assert.equal(result.accepted, 2);
+      assert.equal(result.completed_turns, 1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
 test("Codex Desktop 0.148 结构化事件可被补采", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "zhixing-desktop-148-"));
   const vault = path.join(root, "vault");
@@ -138,7 +166,7 @@ test("未知未来版本 fail-closed 且不得推进文件游标", async () => {
   try {
     await mkdir(path.dirname(session), { recursive: true });
     await writeFile(session, lines([
-      meta("future-session", "0.150.0"),
+      meta("future-session", "0.152.0"),
       event("2026-08-13T09:00:00.000Z", "task_started", { turn_id: "future-turn" }),
       event("2026-08-13T09:00:01.000Z", "user_message", { message: "未来格式不得误采" }),
       event("2026-08-13T09:00:02.000Z", "task_complete", { turn_id: "future-turn", last_agent_message: "不得写入" })
@@ -146,7 +174,7 @@ test("未知未来版本 fail-closed 且不得推进文件游标", async () => {
     const result = await syncCodexDesktop({ vault, codexHome, now: NOW });
     assert.equal(result.supported, false);
     assert.equal(result.accepted, 0);
-    assert.match(result.error, /不支持的 Codex Desktop 数据版本 0\.150\.0/);
+    assert.match(result.error, /不支持的 Codex Desktop 数据版本 0\.152\.0/);
     const state = JSON.parse(await readFile(path.join(vault, "raw", "codex", "sources", "desktop-state.json"), "utf8"));
     assert.deepEqual(state.checkpoints, {});
     await assert.rejects(readFile(path.join(vault, "raw", "codex", "events", "2026-08-13.jsonl"), "utf8"));
