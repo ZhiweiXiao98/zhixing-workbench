@@ -8723,7 +8723,18 @@ var ABSOLUTE_RUNNING_STALE_MS = 6 * 60 * 6e4;
 async function readScheduleState(options) {
   const target = schedulePath(options.vault);
   const now = toDate2(options.now);
-  const state = normalizeState2(await readJson(target, null), now);
+  let state = normalizeState2(await readJson(target, null), now);
+  if (state.status === "backoff" && organizerBusyError(state.error)) {
+    state = {
+      ...state,
+      next_due: now.toISOString(),
+      status: "idle",
+      error: null,
+      failure_count: Math.max(0, state.failure_count - 1),
+      owner_pid: null
+    };
+    await atomicJson(target, state);
+  }
   if (options.recoverStale === false) return state;
   if (state.status !== "running" || !options.recoverInterrupted && !staleRunning(state, now)) return state;
   const recovered = {
@@ -8781,6 +8792,10 @@ async function runDueKnowledgeCycle(options) {
     });
     return { ran: true, ok: true, reason: decision.reason, state };
   } catch (error) {
+    if (organizerBusyError(error)) {
+      state = await finishBusyScheduleAttempt({ vault, state, now: options.finishedAt || /* @__PURE__ */ new Date() });
+      return { ran: false, ok: true, reason: "organizer-busy", state };
+    }
     state = await finishScheduleAttempt({ vault, state, now: options.finishedAt || /* @__PURE__ */ new Date(), ok: false, error });
     return { ran: true, ok: false, reason: decision.reason, state, error: safeError3(error) };
   }
@@ -8898,6 +8913,21 @@ async function finishScheduleAttempt(options) {
   await atomicJson(schedulePath(options.vault), updated);
   return updated;
 }
+async function finishBusyScheduleAttempt(options) {
+  const now = toDate2(options.now);
+  const state = normalizeState2(options.state, now);
+  const updated = {
+    ...state,
+    next_due: new Date(now.getTime() + CATCHUP_DELAY_MS).toISOString(),
+    status: "idle",
+    error: null,
+    owner_pid: null,
+    trigger: "organizer-busy",
+    catchup_pending: true
+  };
+  await atomicJson(schedulePath(options.vault), updated);
+  return updated;
+}
 async function repairLegacyFailedSchedule(options) {
   const state = normalizeState2(options.state, options.now);
   const failure = failedCycleEvidence(options.lastCycle);
@@ -8932,6 +8962,9 @@ function normalizeState2(value, now = /* @__PURE__ */ new Date()) {
     owner_pid: Number.isInteger(value?.owner_pid) && value.owner_pid > 0 ? value.owner_pid : null,
     catchup_pending: Boolean(value?.catchup_pending)
   };
+}
+function organizerBusyError(value) {
+  return value?.code === "ZHIXING_ORGANIZER_BUSY" || String(value instanceof Error ? value.message : value || "").includes("\u77E5\u884C\u53F0\u6B63\u5728\u6574\u7406\uFF0C\u5F53\u524D\u8BF7\u6C42\u5DF2\u8DF3\u8FC7");
 }
 function readyTopicCount(queue) {
   return Math.max(0, Number(queue?.ready_topics ?? queue?.candidate_topics ?? 0));
