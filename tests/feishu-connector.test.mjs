@@ -142,6 +142,24 @@ test("官方 CLI 登录状态只向连接器暴露显示名和作用域计算所
   });
 });
 
+test("妙记批量权限错误给出明确提示且不暴露来源标识或发起授权", async () => {
+  const calls = [];
+  const driver = new LarkCliDriver({ bin: "fictional-lark-cli", exec: async (_bin, args) => {
+    calls.push(args);
+    return jsonResult({ ok: false, data: { minutes: [{ minute_token: "fictional-minute",
+      error: "No read permission for minute fictional-minute. Ask before running +apply-permission" }] } });
+  } });
+  await assert.rejects(driver.list("minutes", { selection: { minute_tokens: ["fictional-minute"] } }), error => {
+    assert.equal(error.category, "permission");
+    assert.equal(error.permanent, true);
+    assert.match(error.message, /没有读取权限/);
+    assert.doesNotMatch(error.message, /fictional-minute/);
+    return true;
+  });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(0, 2), ["minutes", "+detail"]);
+});
+
 test("项目群可以用精确群名解析，避免要求普通用户查找群 ID", async () => {
   const calls = [];
   const driver = new LarkCliDriver({ bin: "fictional-lark-cli", exec: async (_bin, args) => {

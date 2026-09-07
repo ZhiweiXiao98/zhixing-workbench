@@ -399,7 +399,9 @@ async function commitRun(vaultRoot, options) {
         id: settlementId,
         status: outcome.status,
         category: String(topic.anchor || "").startsWith("automation:") ? "durable-output" : "knowledge-topic",
-        title: topic.title,
+        title: String(topic.title || "").startsWith("This block is automatically supplied ambient UI state")
+          ? outcome.wiki_updates?.[0]?.title || previousSettlement?.title || topic.title
+          : topic.title,
         local_date: String(topic.last_seen || "").slice(0, 10),
         occurred_at: topic.last_seen,
         project_label: topic.project,

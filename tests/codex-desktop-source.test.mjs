@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { readCodexDesktopHealth, syncCodexDesktop } from "../packages/runtime/src/codex-desktop-source.mjs";
+import { normalizeDesktopRecords, readCodexDesktopHealth, syncCodexDesktop } from "../packages/runtime/src/codex-desktop-source.mjs";
 
 const NOW = "2026-08-13T10:00:00.000Z";
 
@@ -84,7 +84,7 @@ test("Codex Desktop 0.149 结构化事件可被采集", async () => {
   }
 });
 
-for (const version of ["0.150.0", "0.151.0-alpha.7.2"]) {
+for (const version of ["0.150.0", "0.151.0-alpha.7.2", "0.152.0", "0.152.1", "0.153.0-alpha.5", "0.153.0", "0.153.3", "0.153.4"]) {
   test(`Codex Desktop ${version} 结构化事件可被补采`, async () => {
     const root = await mkdtemp(path.join(tmpdir(), "zhixing-desktop-current-"));
     const vault = path.join(root, "vault");
@@ -96,7 +96,11 @@ for (const version of ["0.150.0", "0.151.0-alpha.7.2"]) {
         meta("desktop-session-current", version),
         event("2026-08-13T09:00:00.000Z", "task_started", { turn_id: "turn-current" }),
         context("2026-08-13T09:00:00.100Z", "turn-current"),
-        event("2026-08-13T09:00:01.000Z", "user_message", { message: "补采当前桌面版本" }),
+        Number(version.split(".")[1]) >= 152
+          ? event("2026-08-13T09:00:01.000Z", "item_completed", {
+            turn_id: "turn-current", item: { type: "UserMessage", content: [{ type: "text", text: "补采当前桌面版本" }] }
+          })
+          : event("2026-08-13T09:00:01.000Z", "user_message", { message: "补采当前桌面版本" }),
         event("2026-08-13T09:00:02.000Z", "task_complete", {
           turn_id: "turn-current",
           last_agent_message: "当前版本补采完成"
@@ -106,11 +110,120 @@ for (const version of ["0.150.0", "0.151.0-alpha.7.2"]) {
       assert.equal(result.supported, true);
       assert.equal(result.accepted, 2);
       assert.equal(result.completed_turns, 1);
+      assert.equal((await syncCodexDesktop({ vault, codexHome, now: NOW })).accepted, 0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 }
+
+test("新版 UserMessage 使用明确轮次，仅采集文本并忽略其他 item", () => {
+  const result = normalizeDesktopRecords([
+    meta("item-session", "0.153.4"),
+    event("2026-08-13T09:00:00.000Z", "task_started", { turn_id: "active-turn" }),
+    event("2026-08-13T09:00:01.000Z", "item_completed", {
+      turn_id: "message-turn", item: { type: "UserMessage", content: [
+        { type: "text", text: "第一段" }, { type: "Text", text: "第二段" },
+        { type: "image", text: "不得采集附件数据" }
+      ] }
+    }),
+    event("2026-08-13T09:00:02.000Z", "item_completed", {
+      turn_id: "active-turn", item: { type: "Reasoning", content: [{ type: "text", text: "不采集内部推理" }] }
+    })
+  ]);
+  assert.equal(result.error, null);
+  assert.equal(result.events.length, 1);
+  assert.equal(result.events[0].turn_id, "message-turn");
+  assert.equal(result.events[0].content, "第一段\n第二段");
+});
+
+test("按日期补采可恢复已跳过文件，不受更晚 raw 时间影响且可幂等重放", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "zhixing-desktop-replay-"));
+  const vault = path.join(root, "vault");
+  const codexHome = path.join(root, "codex-home");
+  const session = path.join(codexHome, "sessions", "missed.jsonl");
+  const statePath = path.join(vault, "raw", "codex", "sources", "desktop-state.json");
+  const rawPath = path.join(vault, "raw", "codex", "events", "2026-08-13.jsonl");
+  try {
+    await mkdir(path.dirname(session), { recursive: true });
+    const content = lines([
+      meta("missed-session", "0.153.4"),
+      event("2026-08-13T09:00:00.000Z", "task_started", { turn_id: "missed-turn" }),
+      event("2026-08-13T09:00:01.000Z", "item_completed", {
+        turn_id: "missed-turn", item: { type: "UserMessage", content: [{ type: "text", text: "遗漏问题" }] }
+      }),
+      event("2026-08-13T09:01:00.000Z", "task_complete", { turn_id: "missed-turn", last_agent_message: "遗漏回答" })
+    ]);
+    await writeFile(session, content, "utf8");
+    await mkdir(path.dirname(rawPath), { recursive: true });
+    await writeFile(rawPath, lines([{ event_id: "existing-event", captured_at: NOW }]), "utf8");
+    await mkdir(path.dirname(statePath), { recursive: true });
+    await writeFile(statePath, JSON.stringify({ checkpoints: { "missed.jsonl": { offset: Buffer.byteLength(content) } } }), "utf8");
+    assert.equal((await syncCodexDesktop({ vault, codexHome, now: NOW })).accepted, 0);
+    const options = { vault, codexHome, now: NOW, replaySince: "2026-08-13T08:00:00.000Z" };
+    const replay = await syncCodexDesktop(options);
+    assert.equal(replay.accepted, 2);
+    assert.equal(replay.completed_turns, 1);
+    assert.equal(replay.error, null);
+    const again = await syncCodexDesktop(options);
+    assert.equal(again.accepted, 0);
+    assert.equal(again.duplicates, 2);
+    assert.equal(parseLines(await readFile(rawPath, "utf8")).length, 3);
+    await assert.rejects(syncCodexDesktop({ ...options, replaySince: "invalid" }), /补采起始时间无效/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("缺少 UI 消息的轮次从持久化用户输入补齐，跨增量保留且不推断空输入", () => {
+  const input = { timestamp: "2026-08-13T09:00:01.000Z", type: "response_item",
+    payload: { type: "message", role: "user", content: [{ type: "input_text", text: "自动唤醒任务" }] } };
+  const first = normalizeDesktopRecords([
+    meta("fallback-session", "0.153.4"),
+    event("2026-08-13T09:00:00.000Z", "task_started", { turn_id: "wake-turn" }), input
+  ]);
+  assert.equal(first.events.length, 0);
+  const completed = normalizeDesktopRecords([
+    event("2026-08-13T09:01:00.000Z", "task_complete", { turn_id: "wake-turn", last_agent_message: "唤醒结果" }),
+    event("2026-08-13T09:02:00.000Z", "task_started", { turn_id: "empty-turn" }),
+    event("2026-08-13T09:03:00.000Z", "task_complete", { turn_id: "empty-turn", last_agent_message: "无输入的继续结果" })
+  ], first.checkpoint);
+  assert.deepEqual(completed.events.map(e => [e.event, e.turn_id]), [
+    ["UserPromptSubmit", "wake-turn"], ["Stop", "wake-turn"], ["Stop", "empty-turn"]
+  ]);
+  assert.equal(completed.events[0].content, "自动唤醒任务");
+  assert.equal(completed.checkpoint.pending_user_content, "");
+});
+
+test("明确用户消息存在时不重复采集响应输入或开发者消息", () => {
+  const records = [
+    meta("preferred-session", "0.153.4"),
+    event("2026-08-13T09:00:00.000Z", "task_started", { turn_id: "preferred-turn" }),
+    { timestamp: "2026-08-13T09:00:01.000Z", type: "response_item",
+      payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "不得采集" }] } },
+    { timestamp: "2026-08-13T09:00:02.000Z", type: "response_item",
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text: "附带上下文的输入" }] } },
+    event("2026-08-13T09:00:03.000Z", "user_message", { message: "真实用户问题" }),
+    event("2026-08-13T09:01:00.000Z", "task_complete", { turn_id: "preferred-turn", last_agent_message: "最终回答" })
+  ];
+  const result = normalizeDesktopRecords(records);
+  assert.deepEqual(result.events.map(e => e.content), ["真实用户问题", "最终回答"]);
+});
+
+test("其他轮次的迟到消息不覆盖当前轮次的输入去重状态", () => {
+  const result = normalizeDesktopRecords([
+    meta("late-session", "0.153.4"),
+    event("2026-08-13T09:00:00.000Z", "task_started", { turn_id: "current-turn" }),
+    event("2026-08-13T09:00:01.000Z", "user_message", { message: "当前问题" }),
+    { timestamp: "2026-08-13T09:00:02.000Z", type: "response_item",
+      payload: { type: "message", role: "user", content: [{ type: "input_text", text: "当前问题及附带上下文" }] } },
+    event("2026-08-13T09:00:03.000Z", "item_completed", {
+      turn_id: "previous-turn", item: { type: "UserMessage", content: [{ type: "text", text: "迟到问题" }] }
+    }),
+    event("2026-08-13T09:01:00.000Z", "task_complete", { turn_id: "current-turn", last_agent_message: "当前回答" })
+  ]);
+  assert.deepEqual(result.events.map(e => e.content), ["当前问题", "迟到问题", "当前回答"]);
+});
 
 test("Codex Desktop 0.148 结构化事件可被补采", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "zhixing-desktop-148-"));
@@ -166,7 +279,7 @@ test("未知未来版本 fail-closed 且不得推进文件游标", async () => {
   try {
     await mkdir(path.dirname(session), { recursive: true });
     await writeFile(session, lines([
-      meta("future-session", "0.152.0"),
+      meta("future-session", "0.154.0"),
       event("2026-08-13T09:00:00.000Z", "task_started", { turn_id: "future-turn" }),
       event("2026-08-13T09:00:01.000Z", "user_message", { message: "未来格式不得误采" }),
       event("2026-08-13T09:00:02.000Z", "task_complete", { turn_id: "future-turn", last_agent_message: "不得写入" })
@@ -174,7 +287,7 @@ test("未知未来版本 fail-closed 且不得推进文件游标", async () => {
     const result = await syncCodexDesktop({ vault, codexHome, now: NOW });
     assert.equal(result.supported, false);
     assert.equal(result.accepted, 0);
-    assert.match(result.error, /不支持的 Codex Desktop 数据版本 0\.152\.0/);
+    assert.match(result.error, /不支持的 Codex Desktop 数据版本 0\.154\.0/);
     const state = JSON.parse(await readFile(path.join(vault, "raw", "codex", "sources", "desktop-state.json"), "utf8"));
     assert.deepEqual(state.checkpoints, {});
     await assert.rejects(readFile(path.join(vault, "raw", "codex", "events", "2026-08-13.jsonl"), "utf8"));

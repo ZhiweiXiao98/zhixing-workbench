@@ -8,9 +8,11 @@ const SOURCE_TYPE = "codex_desktop_sessions_v1";
 const CAPTURE_SOURCE = "codex_desktop";
 const DEFAULT_STALE_MS = 36 * 60 * 60_000;
 const DEFAULT_BOOTSTRAP_LOOKBACK_MS = 24 * 60 * 60_000;
-const VERIFIED_PRODUCER_MINORS = new Set([144, 147, 148, 149, 150, 151]);
+const VERIFIED_PRODUCER_MINORS = new Set([144, 147, 148, 149, 150, 151, 152, 153]);
 
 export async function syncCodexDesktop(options) {
+  const replayAfter = options.replaySince == null ? null : validIso(options.replaySince);
+  if (options.replaySince != null && !replayAfter) throw new Error("补采起始时间无效");
   const vault = path.resolve(options.vault);
   const codexHome = path.resolve(options.codexHome || process.env.CODEX_HOME || path.join(homedir(), ".codex"));
   const sessionsRoot = path.join(codexHome, "sessions");
@@ -21,7 +23,8 @@ export async function syncCodexDesktop(options) {
   const state = { ...previous, checkpoints: { ...previous.checkpoints }, last_sync_at: nowIso };
   let files;
   try {
-    files = (await listJsonlFiles(sessionsRoot, options.readdir || readdir)).slice(-500);
+    files = await listJsonlFiles(sessionsRoot, options.readdir || readdir);
+    if (!replayAfter) files = files.slice(-500);
     state.configured = true;
   } catch (error) {
     const health = failureHealth(state, now, `无法读取 Codex Desktop 会话目录：${safeError(error)}`);
@@ -31,7 +34,7 @@ export async function syncCodexDesktop(options) {
 
   const knownIds = await readKnownEventIds(path.join(vault, "raw", "codex", "events"));
   const rawLastEventAt = await readLastCodexEventAt(path.join(vault, "raw", "codex", "events"));
-  const bootstrapAfter = rawLastEventAt || new Date(now.getTime() - (options.bootstrapLookbackMs ?? DEFAULT_BOOTSTRAP_LOOKBACK_MS)).toISOString();
+  const bootstrapAfter = replayAfter || rawLastEventAt || new Date(now.getTime() - (options.bootstrapLookbackMs ?? DEFAULT_BOOTSTRAP_LOOKBACK_MS)).toISOString();
   const inspectedMetadata = await inspectNewestDesktopMetadata(sessionsRoot).catch(() => null);
   const appended = [];
   const errors = [];
@@ -41,9 +44,10 @@ export async function syncCodexDesktop(options) {
 
   for (const file of files) {
     const relative = path.relative(sessionsRoot, file).split(path.sep).join("/");
-    const previousCheckpoint = normalizeCheckpoint(state.checkpoints[relative]);
+    const previousCheckpoint = normalizeCheckpoint(replayAfter ? null : state.checkpoints[relative]);
     try {
       const info = await stat(file);
+      if (replayAfter && info.mtimeMs < Date.parse(replayAfter)) continue;
       const startOffset = info.size < previousCheckpoint.offset ? 0 : Math.min(previousCheckpoint.offset, info.size);
       const bootstrapCutoff = Math.min(Date.parse(bootstrapAfter), now.getTime() - 5 * 60_000);
       if (previousCheckpoint.offset === 0 && !previousCheckpoint.session_id && info.mtimeMs <= bootstrapCutoff) {
@@ -221,6 +225,9 @@ export function normalizeDesktopRecords(records, baseCheckpoint = {}, options = 
     if (record.type === "event_msg" && payload.type === "task_started") {
       activeTurnId = stringValue(payload.turn_id);
       checkpoint.active_turn_id = activeTurnId;
+      checkpoint.pending_user_content = "";
+      checkpoint.pending_user_at = null;
+      checkpoint.user_prompt_turn_id = null;
       continue;
     }
     if (record.type === "turn_context" && payload.turn_id) {
@@ -229,16 +236,37 @@ export function normalizeDesktopRecords(records, baseCheckpoint = {}, options = 
       if (payload.cwd) checkpoint.cwd = stringValue(payload.cwd);
       continue;
     }
-    if (record.type !== "event_msg") continue;
     const capturedAt = validIso(record.timestamp) || validIso(payload.completed_at) || null;
     if (!capturedAt || (options.bootstrapAfter && capturedAt <= options.bootstrapAfter)) continue;
-    if (payload.type === "user_message") {
-      if (!activeTurnId) {
+    if (record.type === "response_item" && payload.type === "message" && payload.role === "user" && activeTurnId) {
+      const text = (Array.isArray(payload.content) ? payload.content : [])
+        .filter((item) => item?.type === "input_text" && typeof item.text === "string")
+        .map((item) => item.text).join("\n");
+      if (text) {
+        checkpoint.pending_user_content = [checkpoint.pending_user_content, redactText(text)].filter(Boolean).join("\n\n");
+        checkpoint.pending_user_at ||= capturedAt;
+      }
+      continue;
+    }
+    if (record.type !== "event_msg") continue;
+    const userItem = payload.type === "item_completed" && payload.item?.type === "UserMessage"
+      ? payload.item : null;
+    if (payload.type === "user_message" || userItem) {
+      const turnId = stringValue(payload.turn_id || activeTurnId);
+      if (!turnId) {
         error = "用户消息缺少可关联的 turn_id";
         continue;
       }
-      const event = createEvent("UserPromptSubmit", capturedAt, checkpoint, activeTurnId, payload.message);
-      if (event) events.push(event);
+      const content = userItem
+        ? (Array.isArray(userItem.content) ? userItem.content : [])
+          .filter((item) => ["text", "Text"].includes(item?.type) && typeof item.text === "string")
+          .map((item) => item.text).join("\n")
+        : payload.message;
+      const event = createEvent("UserPromptSubmit", capturedAt, checkpoint, turnId, content);
+      if (event) {
+        events.push(event);
+        if (turnId === activeTurnId) checkpoint.user_prompt_turn_id = turnId;
+      }
       continue;
     }
     if (payload.type === "task_complete" || payload.type === "turn_aborted") {
@@ -248,11 +276,19 @@ export function normalizeDesktopRecords(records, baseCheckpoint = {}, options = 
         continue;
       }
       const content = payload.type === "turn_aborted" ? "本轮任务已中止" : payload.last_agent_message;
+      // Automatic wakeups may persist only response_item input, without a UI UserMessage item.
+      if (turnId === activeTurnId && checkpoint.user_prompt_turn_id !== turnId && checkpoint.pending_user_at) {
+        const prompt = createEvent("UserPromptSubmit", checkpoint.pending_user_at, checkpoint, turnId, checkpoint.pending_user_content);
+        if (prompt) events.push(prompt);
+      }
       const event = createEvent("Stop", capturedAt, checkpoint, turnId, content);
       if (event) events.push(event);
       if (turnId === activeTurnId) {
         activeTurnId = null;
         checkpoint.active_turn_id = null;
+        checkpoint.pending_user_content = "";
+        checkpoint.pending_user_at = null;
+        checkpoint.user_prompt_turn_id = null;
       }
     }
   }
@@ -359,7 +395,10 @@ function normalizeCheckpoint(value) {
     originator: stringValue(value?.originator),
     producer_version: stringValue(value?.producer_version),
     is_subagent: Boolean(value?.is_subagent),
-    active_turn_id: stringValue(value?.active_turn_id) || null
+    active_turn_id: stringValue(value?.active_turn_id) || null,
+    user_prompt_turn_id: stringValue(value?.user_prompt_turn_id) || null,
+    pending_user_at: validIso(value?.pending_user_at),
+    pending_user_content: typeof value?.pending_user_content === "string" ? value.pending_user_content : ""
   };
 }
 
