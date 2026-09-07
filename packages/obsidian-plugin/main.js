@@ -8310,8 +8310,10 @@ var SOURCE_TYPE = "codex_desktop_sessions_v1";
 var CAPTURE_SOURCE = "codex_desktop";
 var DEFAULT_STALE_MS = 36 * 60 * 6e4;
 var DEFAULT_BOOTSTRAP_LOOKBACK_MS = 24 * 60 * 6e4;
-var VERIFIED_PRODUCER_MINORS = /* @__PURE__ */ new Set([144, 147, 148, 149, 150, 151]);
+var VERIFIED_PRODUCER_MINORS = /* @__PURE__ */ new Set([144, 147, 148, 149, 150, 151, 152, 153]);
 async function syncCodexDesktop(options) {
+  const replayAfter = options.replaySince == null ? null : validIso(options.replaySince);
+  if (options.replaySince != null && !replayAfter) throw new Error("\u8865\u91C7\u8D77\u59CB\u65F6\u95F4\u65E0\u6548");
   const vault = import_node_path8.default.resolve(options.vault);
   const codexHome = import_node_path8.default.resolve(options.codexHome || process.env.CODEX_HOME || import_node_path8.default.join((0, import_node_os4.homedir)(), ".codex"));
   const sessionsRoot = import_node_path8.default.join(codexHome, "sessions");
@@ -8322,7 +8324,8 @@ async function syncCodexDesktop(options) {
   const state = { ...previous, checkpoints: { ...previous.checkpoints }, last_sync_at: nowIso };
   let files;
   try {
-    files = (await listJsonlFiles(sessionsRoot, options.readdir || import_promises6.readdir)).slice(-500);
+    files = await listJsonlFiles(sessionsRoot, options.readdir || import_promises6.readdir);
+    if (!replayAfter) files = files.slice(-500);
     state.configured = true;
   } catch (error) {
     const health = failureHealth(state, now, `\u65E0\u6CD5\u8BFB\u53D6 Codex Desktop \u4F1A\u8BDD\u76EE\u5F55\uFF1A${safeError2(error)}`);
@@ -8331,7 +8334,7 @@ async function syncCodexDesktop(options) {
   }
   const knownIds = await readKnownEventIds(import_node_path8.default.join(vault, "raw", "codex", "events"));
   const rawLastEventAt = await readLastCodexEventAt(import_node_path8.default.join(vault, "raw", "codex", "events"));
-  const bootstrapAfter = rawLastEventAt || new Date(now.getTime() - (options.bootstrapLookbackMs ?? DEFAULT_BOOTSTRAP_LOOKBACK_MS)).toISOString();
+  const bootstrapAfter = replayAfter || rawLastEventAt || new Date(now.getTime() - (options.bootstrapLookbackMs ?? DEFAULT_BOOTSTRAP_LOOKBACK_MS)).toISOString();
   const inspectedMetadata = await inspectNewestDesktopMetadata(sessionsRoot).catch(() => null);
   const appended = [];
   const errors = [];
@@ -8340,9 +8343,10 @@ async function syncCodexDesktop(options) {
   let completedTurns = 0;
   for (const file of files) {
     const relative = import_node_path8.default.relative(sessionsRoot, file).split(import_node_path8.default.sep).join("/");
-    const previousCheckpoint = normalizeCheckpoint(state.checkpoints[relative]);
+    const previousCheckpoint = normalizeCheckpoint(replayAfter ? null : state.checkpoints[relative]);
     try {
       const info = await (0, import_promises6.stat)(file);
+      if (replayAfter && info.mtimeMs < Date.parse(replayAfter)) continue;
       const startOffset = info.size < previousCheckpoint.offset ? 0 : Math.min(previousCheckpoint.offset, info.size);
       const bootstrapCutoff = Math.min(Date.parse(bootstrapAfter), now.getTime() - 5 * 6e4);
       if (previousCheckpoint.offset === 0 && !previousCheckpoint.session_id && info.mtimeMs <= bootstrapCutoff) {
@@ -8518,6 +8522,9 @@ function normalizeDesktopRecords(records, baseCheckpoint = {}, options = {}) {
     if (record.type === "event_msg" && payload.type === "task_started") {
       activeTurnId = stringValue4(payload.turn_id);
       checkpoint.active_turn_id = activeTurnId;
+      checkpoint.pending_user_content = "";
+      checkpoint.pending_user_at = null;
+      checkpoint.user_prompt_turn_id = null;
       continue;
     }
     if (record.type === "turn_context" && payload.turn_id) {
@@ -8526,16 +8533,30 @@ function normalizeDesktopRecords(records, baseCheckpoint = {}, options = {}) {
       if (payload.cwd) checkpoint.cwd = stringValue4(payload.cwd);
       continue;
     }
-    if (record.type !== "event_msg") continue;
     const capturedAt = validIso(record.timestamp) || validIso(payload.completed_at) || null;
     if (!capturedAt || options.bootstrapAfter && capturedAt <= options.bootstrapAfter) continue;
-    if (payload.type === "user_message") {
-      if (!activeTurnId) {
+    if (record.type === "response_item" && payload.type === "message" && payload.role === "user" && activeTurnId) {
+      const text = (Array.isArray(payload.content) ? payload.content : []).filter((item) => item?.type === "input_text" && typeof item.text === "string").map((item) => item.text).join("\n");
+      if (text) {
+        checkpoint.pending_user_content = [checkpoint.pending_user_content, redactText(text)].filter(Boolean).join("\n\n");
+        checkpoint.pending_user_at ||= capturedAt;
+      }
+      continue;
+    }
+    if (record.type !== "event_msg") continue;
+    const userItem = payload.type === "item_completed" && payload.item?.type === "UserMessage" ? payload.item : null;
+    if (payload.type === "user_message" || userItem) {
+      const turnId = stringValue4(payload.turn_id || activeTurnId);
+      if (!turnId) {
         error = "\u7528\u6237\u6D88\u606F\u7F3A\u5C11\u53EF\u5173\u8054\u7684 turn_id";
         continue;
       }
-      const event = createEvent("UserPromptSubmit", capturedAt, checkpoint, activeTurnId, payload.message);
-      if (event) events.push(event);
+      const content = userItem ? (Array.isArray(userItem.content) ? userItem.content : []).filter((item) => ["text", "Text"].includes(item?.type) && typeof item.text === "string").map((item) => item.text).join("\n") : payload.message;
+      const event = createEvent("UserPromptSubmit", capturedAt, checkpoint, turnId, content);
+      if (event) {
+        events.push(event);
+        if (turnId === activeTurnId) checkpoint.user_prompt_turn_id = turnId;
+      }
       continue;
     }
     if (payload.type === "task_complete" || payload.type === "turn_aborted") {
@@ -8545,11 +8566,18 @@ function normalizeDesktopRecords(records, baseCheckpoint = {}, options = {}) {
         continue;
       }
       const content = payload.type === "turn_aborted" ? "\u672C\u8F6E\u4EFB\u52A1\u5DF2\u4E2D\u6B62" : payload.last_agent_message;
+      if (turnId === activeTurnId && checkpoint.user_prompt_turn_id !== turnId && checkpoint.pending_user_at) {
+        const prompt = createEvent("UserPromptSubmit", checkpoint.pending_user_at, checkpoint, turnId, checkpoint.pending_user_content);
+        if (prompt) events.push(prompt);
+      }
       const event = createEvent("Stop", capturedAt, checkpoint, turnId, content);
       if (event) events.push(event);
       if (turnId === activeTurnId) {
         activeTurnId = null;
         checkpoint.active_turn_id = null;
+        checkpoint.pending_user_content = "";
+        checkpoint.pending_user_at = null;
+        checkpoint.user_prompt_turn_id = null;
       }
     }
   }
@@ -8665,7 +8693,10 @@ function normalizeCheckpoint(value) {
     originator: stringValue4(value?.originator),
     producer_version: stringValue4(value?.producer_version),
     is_subagent: Boolean(value?.is_subagent),
-    active_turn_id: stringValue4(value?.active_turn_id) || null
+    active_turn_id: stringValue4(value?.active_turn_id) || null,
+    user_prompt_turn_id: stringValue4(value?.user_prompt_turn_id) || null,
+    pending_user_at: validIso(value?.pending_user_at),
+    pending_user_content: typeof value?.pending_user_content === "string" ? value.pending_user_content : ""
   };
 }
 function failureHealth(state, now, error) {

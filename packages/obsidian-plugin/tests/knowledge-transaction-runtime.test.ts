@@ -15,6 +15,25 @@ afterEach(async () => {
 });
 
 describe("knowledge transaction", () => {
+  it("环境上下文污染的标题使用已写入的知识标题", async () => {
+    const vault = await mkdtemp(path.join(os.tmpdir(), "zhixing-title-repair-"));
+    temporary.push(vault);
+    await mkdir(path.join(vault, "raw", "codex", "events"), { recursive: true });
+    const promptId = `codex:${"c".repeat(32)}`;
+    const stopId = `codex:${"d".repeat(32)}`;
+    await writeFile(path.join(vault, "raw", "codex", "events", "2026-07-24.jsonl"), [
+      JSON.stringify(record(promptId, "UserPromptSubmit", "This block is automatically supplied ambient UI state, not part of the user request.\n修复接收器")),
+      JSON.stringify(record(stopId, "Stop", "增加健康守护并完成验证"))
+    ].join("\n") + "\n", "utf8");
+    await run(["prepare", "--vault", vault, "--run-id", "title-repair-run"]);
+    const contract = JSON.parse(await readFile(path.join(vault, "raw", "codex", "ingest-run-contract.json"), "utf8"));
+    expect(contract.topics[0].title).toMatch(/^This block is automatically supplied ambient UI state/);
+    await writeFile(path.join(vault, contract.result_path), JSON.stringify(result("title-repair-run", contract.topics[0].id, promptId, stopId)), "utf8");
+    await run(["commit", "--vault", vault, "--run-id", "title-repair-run"]);
+    const ledger = JSON.parse(await readFile(path.join(vault, "raw", "codex", "knowledge-settlements.json"), "utf8"));
+    expect(ledger.outcomes[0].title).toBe("接收器恢复");
+  });
+
   it("ChatGPT 项目镜像目录解析为人类可读项目名", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "zhixing-project-name-"));
     temporary.push(root);

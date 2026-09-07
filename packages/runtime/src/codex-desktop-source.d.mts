@@ -21,6 +21,7 @@ export function syncCodexDesktop(options: {
   now?: Date | string | number;
   staleAfterMs?: number;
   bootstrapLookbackMs?: number;
+  replaySince?: string;
 }): Promise<CodexDesktopSyncResult>;
 
 export function readCodexDesktopHealth(options: {

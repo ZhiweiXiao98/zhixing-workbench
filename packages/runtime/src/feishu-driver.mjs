@@ -288,6 +288,13 @@ function extractContent(value) {
 
 function checkedPayload(payload) {
   if (payload?.ok !== false) return payload;
+  const minuteErrors = Array.isArray(payload.data?.minutes)
+    ? payload.data.minutes.map((item) => item?.error).filter(Boolean) : [];
+  if (minuteErrors.some((error) => /no read permission|permission denied|forbidden/i.test(String(error)))) {
+    throw new FeishuDriverError("妙记来源没有读取权限；申请查看权限需要用户明确确认", {
+      category: "permission", permanent: true
+    });
+  }
   const error = payload.error || {};
   const subtype = String(error.subtype || error.type || "unknown");
   const message = String(error.message || "飞书命令执行失败");
